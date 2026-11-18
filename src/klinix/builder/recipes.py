@@ -12,7 +12,9 @@ from klinix.sources import artifact_filename
 TARGET_TRIPLET = "x86_64-lfs-linux-gnu"
 SYSROOT = "/mnt/lfs"
 TOOLS = f"{SYSROOT}/tools"
-BOOTSTRAP_HOST_TOOLS = ("bash", "bison", "flex", "gawk", "g++", "makeinfo", "diff", "perl")
+BOOTSTRAP_HOST_TOOLS = (
+    "bash", "bison", "diff", "find", "flex", "g++", "gawk", "grep", "m4", "makeinfo", "perl", "python3", "readlink",
+)
 VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)+")
 
 
@@ -47,6 +49,8 @@ class PackageBuild:
     required_output: tuple[str, ...]
     bootstrap: bool = False
     prerequisites: tuple["PackageBuild", ...] = ()
+    root_directories: tuple[str, ...] = ("usr",)
+    root_symlinks: tuple[str, ...] = ()
 
 
 def reviewed_build(book: Book, recipe_id: str, jobs: int) -> PackageBuild:
@@ -59,6 +63,8 @@ def reviewed_build(book: Book, recipe_id: str, jobs: int) -> PackageBuild:
         "bzip2-v1": _bzip2,
         "binutils-pass1-v1": _binutils,
         "gcc-pass1-v1": _gcc,
+        "linux-headers-v1": _linux_headers,
+        "glibc-cross-v1": _glibc,
     }.get(adapter)
     if (book.pin.family, book.pin.edition) != ("lfs", "systemd") or factory is None:
         raise KlinixError(f"No reviewed build adapter for {recipe_id!r} at {book.pin.revision}")
@@ -153,7 +159,7 @@ def _binutils(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageB
     )
     expected = tuple(f"tools/bin/{TARGET_TRIPLET}-{name}" for name in ("as", "ld", "ar", "readelf"))
     return PackageBuild(book.pin, recipe.id, package, approval["adapter"], (archive,),
-                        source_root, commands, expected, bootstrap=True)
+                        source_root, commands, expected, bootstrap=True, root_directories=("tools",))
 
 
 def _gcc(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
@@ -218,4 +224,104 @@ def _gcc(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
     )
     binutils = reviewed_build(book, "chapter05/binutils-pass1", jobs)
     return PackageBuild(book.pin, recipe.id, package, approval["adapter"], tuple(archives),
-                        source_root, commands, expected, bootstrap=True, prerequisites=(binutils,))
+                        source_root, commands, expected, bootstrap=True, prerequisites=(binutils,), root_directories=("tools",))
+
+
+def _linux_headers(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
+    package = recipe.package
+    if package is None or package.name != "linux-headers":
+        raise KlinixError("Pinned catalog lacks the reviewed Linux API headers metadata")
+    source_root = f"linux-{package.version}"
+    archive = _select_input(book, recipe, source_root + ".tar.xz", "source", approval["source_sha256"])
+    make = ("/usr/bin/make", "ARCH=x86", "HOSTCC=/usr/bin/gcc")
+    commands = (
+        Command("Clean the kernel source tree", (*make, "mrproper"), timeout=300),
+        Command("Generate the x86 Linux API headers", (*make, f"-j{jobs}", "headers"), timeout=900),
+        Command("Remove non-header files from the generated include tree", (
+            "/usr/bin/find", "usr/include", "-type", "f", "!", "-name", "*.h", "-delete",
+        )),
+        Command("Create the target include directory", ("/usr/bin/mkdir", "-p", f"{SYSROOT}/usr/include")),
+        Command("Install the Linux API headers into the sysroot", (
+            "/usr/bin/cp", "-R", "usr/include/.", f"{SYSROOT}/usr/include/",
+        )),
+    )
+    expected = ("usr/include/linux/version.h", "usr/include/linux/types.h", "usr/include/asm/unistd_64.h")
+    return PackageBuild(book.pin, recipe.id, package, approval["adapter"], (archive,),
+                        source_root, commands, expected, bootstrap=True)
+
+
+def _glibc(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
+    package = recipe.package
+    if package is None or package.name != "glibc":
+        raise KlinixError("Pinned catalog lacks the reviewed cross-Glibc metadata")
+    source_root = f"glibc-{package.version}"
+    fhs_patch = "glibc-fhs-1.patch"
+    fixes_patch = f"{source_root}-upstream_fixes-1.patch"
+    inputs = (
+        _select_input(book, recipe, source_root + ".tar.xz", "source", approval["source_sha256"]),
+        _select_input(book, recipe, fhs_patch, "patch", approval["fhs_sha256"]),
+        _select_input(book, recipe, fixes_patch, "patch", approval["fixes_sha256"]),
+    )
+    patch = ("/usr/bin/patch", "--batch", "--forward", "-Np1", "-i")
+    target_bin = f"{TOOLS}/bin/{TARGET_TRIPLET}"
+    loader = "/lib64/ld-linux-x86-64.so.2"
+    loader_target = "../lib/ld-linux-x86-64.so.2"
+    commands = (
+        Command("Prepare the target library directories", (
+            "/usr/bin/mkdir", "-p", f"{SYSROOT}/usr/lib", f"{SYSROOT}/lib64",
+        )),
+        Command("Create the merged /lib link", ("/usr/bin/ln", "-s", "usr/lib", f"{SYSROOT}/lib")),
+        Command("Create the x86-64 loader link", ("/usr/bin/ln", "-s", loader_target, SYSROOT + loader)),
+        Command("Create the LSB loader link", (
+            "/usr/bin/ln", "-s", loader_target, f"{SYSROOT}/lib64/ld-lsb-x86-64.so.3",
+        )),
+        Command("Apply Glibc's FHS layout patch", (*patch, f"/inputs/{fhs_patch}")),
+        Command("Apply Glibc's upstream fixes", (*patch, f"/inputs/{fixes_patch}")),
+        Command("Create an out-of-tree build directory", ("/usr/bin/mkdir", "build")),
+        Command("Configure Glibc for the LFS sysroot", (
+            "/usr/bin/bash", "-ec",
+            r'printf "%s\n" "rootsbindir=/usr/sbin" > configparms; '
+            'exec ../configure --build="$(../scripts/config.guess)" "$@"',
+            "klinix", "--prefix=/usr", f"--host={TARGET_TRIPLET}",
+            f"--with-headers={SYSROOT}/usr/include", "--disable-nscd", "libc_cv_slibdir=/usr/lib",
+            f"--enable-kernel={approval['min_kernel']}", f"CC={target_bin}-gcc", f"AR={target_bin}-ar",
+            f"RANLIB={target_bin}-ranlib", "BUILD_CC=/usr/bin/gcc",
+        ), cwd="build", timeout=600),
+        Command("Cross-compile Glibc", ("/usr/bin/make", f"-j{jobs}"), cwd="build", timeout=3600),
+        Command("Install Glibc into the sysroot", (
+            "/usr/bin/make", f"DESTDIR={SYSROOT}", "install",
+        ), cwd="build", timeout=900),
+        Command("Set ldd to use the target's loader paths", (
+            "/usr/bin/sed", "-i", "/RTLDLIST=/s@/usr@@g", f"{SYSROOT}/usr/bin/ldd",
+        )),
+        Command("Verify headers, startup files, linker, and the staged Glibc runtime", (
+            "/usr/bin/bash", "-ec",
+            r'printf "%s\n" "#include <stdio.h>" "#include <linux/version.h>" '
+            "'int main(void) { return puts(\"Klinix sysroot OK\") < 0; }' > libc-probe.c; "
+            '"$1-gcc" -H -Wl,--trace libc-probe.c -o libc-probe > link.trace 2>&1 || { cat link.trace; exit 1; }; '
+            'cat link.trace; '
+            'grep -F "$2/usr/include/stdio.h" link.trace; '
+            'grep -F "$2/usr/include/linux/version.h" link.trace; '
+            'for object in Scrt1.o crti.o crtn.o; do '
+            'test "$(readlink -e "$("$1-gcc" -print-file-name="$object")")" = "$2/usr/lib/$object"; done; '
+            '"$1-readelf" -lW libc-probe > interpreter.trace; '
+            'grep -F "Requesting program interpreter: $3]" interpreter.trace; '
+            '"$2$3" --inhibit-cache --library-path "$2/usr/lib" --list ./libc-probe > libraries.trace; '
+            'grep -F "$2/usr/lib/libc.so.6" libraries.trace; '
+            '"$2$3" --inhibit-cache --library-path "$2/usr/lib" ./libc-probe > probe.out; '
+            'grep -Fx "Klinix sysroot OK" probe.out',
+            "klinix", target_bin, SYSROOT, loader,
+        ), cwd="build"),
+    )
+    required = (
+        "usr/include/stdio.h", "usr/lib/libc.so.6", "usr/lib/Scrt1.o", "usr/lib/crti.o",
+        "usr/lib/crtn.o", "usr/bin/ldd", loader.lstrip("/"), "lib64/ld-lsb-x86-64.so.3",
+    )
+    prerequisites = tuple(reviewed_build(book, name, jobs) for name in (
+        "chapter05/gcc-pass1", "chapter05/linux-headers",
+    ))
+    return PackageBuild(
+        book.pin, recipe.id, package, approval["adapter"], inputs, source_root, commands, required,
+        bootstrap=True, prerequisites=prerequisites, root_directories=("usr", "lib64", "etc", "var"),
+        root_symlinks=("lib",),
+    )

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from klinix.books.lfs import LfsProvider
-from klinix.builder import MANIFEST, run_build
+from klinix.builder import MANIFEST, build_order, run_build
 from klinix.builder.files import inventory, new_target, publish, stage_input, unpack_archive
 from klinix.builder.recipes import ApprovedInput, reviewed_build
 from klinix.builder.sandbox import Bubblewrap
@@ -45,6 +45,29 @@ def test_archive_unsafe_members_fail(tmp_path, name, entry_type):
     with pytest.raises(KlinixError, match="Archive path escapes|Unsupported archive entry"):
         unpack_archive(archive, tmp_path / "source", "package")
     assert not (tmp_path / "escape").exists()
+
+
+@pytest.mark.parametrize("entry_name", ["package/data.h", "package/uapi/alias/child.h"])
+def test_archive_links_are_created_after_regular_members(tmp_path, entry_name):
+    archive = tmp_path / "headers.tar.xz"
+    with tarfile.open(archive, mode="w:xz") as tar:
+        link = tarfile.TarInfo("package/uapi/alias")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "../data.h"
+        tar.addfile(link)
+        file = tarfile.TarInfo(entry_name)
+        file.size = 3
+        tar.addfile(file, io.BytesIO(b"api"))
+    destination = tmp_path / "source"
+    if entry_name.endswith("/child.h"):
+        with pytest.raises(KlinixError, match="Archive symlink conflicts"):
+            unpack_archive(archive, destination, "package")
+        assert not (destination / "package/data.h").exists()
+    else:
+        unpack_archive(archive, destination, "package")
+        alias = destination / "package/uapi/alias"
+        assert alias.is_symlink()
+        assert alias.read_bytes() == b"api"
 
 
 def test_verified_material_checks_sha256_and_catalog_checksum(tmp_path):
@@ -219,6 +242,23 @@ def test_bootstrap_hardlinks_must_stay_inside_target(tmp_path):
         inventory(root, (), bootstrap=True)
 
 
+def test_sysroot_inventory_allows_only_reviewed_root_entries(tmp_path):
+    root = tmp_path / "root"
+    (root / "lib64").mkdir(parents=True)
+    (root / "usr/lib").mkdir(parents=True)
+    (root / "usr/lib/ld-linux-x86-64.so.2").write_text("loader")
+    (root / "lib").symlink_to("usr/lib")
+    (root / "lib64/ld-linux-x86-64.so.2").symlink_to("../lib/ld-linux-x86-64.so.2")
+    layout = {"bootstrap": True, "directories": ("usr", "lib64"), "symlinks": ("lib",)}
+    records = {item["path"]: item for item in inventory(root, ("lib",), **layout)}
+    assert records["lib"]["target"] == "usr/lib"
+    assert records["lib64/ld-linux-x86-64.so.2"]["kind"] == "symlink"
+    (root / "lib").unlink()
+    (root / "lib").mkdir()
+    with pytest.raises(KlinixError, match="Unexpected root entry.*lib"):
+        inventory(root, (), **layout)
+
+
 @pytest.fixture
 def pinned_book():
     location = os.environ.get("KLINIX_TEST_LFS_SOURCE")
@@ -242,6 +282,26 @@ def test_bootstrap_preview_contains_only_reviewed_commands(pinned_book, tmp_path
                                     if not item["filename"].startswith("gcc-")}
     compile_command = next(command for command in output["commands"] if "-j3" in command["argv"])
     assert compile_command["cwd"] == "build"
+    assert not list(tmp_path.glob("klinix-build-*.log"))
+
+
+def test_glibc_plan_schedules_transitive_prerequisites_and_patches(pinned_book, tmp_path, capsys):
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    build = reviewed_build(pinned_book, "chapter05/glibc", 2)
+    assert [stage.package.name for stage in build_order(build)] == [
+        "binutils-pass1", "gcc-pass1", "linux-headers", "glibc",
+    ]
+    assert main([
+        "--db", str(db), "build-package", build.recipe, "--revision", APPROVED_REVISION, "--dry-run",
+    ]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["mode"] == "dry-run"
+    assert output["prerequisites"][0]["prerequisites"][0]["recipe"] == "chapter05/binutils-pass1"
+    assert output["prerequisites"][1]["recipe"] == "chapter05/linux-headers"
+    assert {item["filename"] for item in output["inputs"]} == {
+        "glibc-2.44.tar.xz", "glibc-fhs-1.patch", "glibc-2.44-upstream_fixes-1.patch",
+    }
     assert not list(tmp_path.glob("klinix-build-*.log"))
 
 
@@ -301,3 +361,27 @@ def test_real_bootstrap_pass(recipe, pinned_book, tmp_path, capsys):
         assert (target / f"tools/bin/{triplet}-g++").is_file()
         assert "Klinix binutils-pass1-v1" in log.split("Klinix gcc-pass1-v1", 1)[0]
         assert "File: cxx.o" in log
+
+
+def test_real_cross_glibc(pinned_book, tmp_path, capsys):
+    location = os.environ.get("KLINIX_TEST_SYSROOT_SOURCES")
+    if not location:
+        pytest.skip("official sysroot materials and rootless Bubblewrap required")
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    target = tmp_path / "sysroot"
+    assert main([
+        "--db", str(db), "build-package", "chapter05/glibc", "--revision", APPROVED_REVISION,
+        "--sources", location, "--target", str(target), "--jobs", "2",
+    ]) == 0
+    output = json.loads(capsys.readouterr().out)
+    manifest = json.loads((target / MANIFEST).read_text())
+    assert manifest["recipe"] == "chapter05/glibc"
+    assert (target / "usr/include/linux/version.h").is_file()
+    assert (target / "usr/lib/libc.so.6").is_file()
+    loader = (target / "lib64/ld-linux-x86-64.so.2").resolve(strict=True)
+    assert loader.is_relative_to(target)
+    log = Path(output["log"]).read_text()
+    assert "Requesting program interpreter: /lib64/ld-linux-x86-64.so.2" in log
+    assert "libc.so.6 => /mnt/lfs/usr/lib/libc.so.6" in log
+    assert "Klinix sysroot OK" in log.splitlines()

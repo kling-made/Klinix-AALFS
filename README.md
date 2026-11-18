@@ -2,7 +2,7 @@
 
 Klinix is an independent Advanced Automated Linux From Scratch builder and source package manager for x86-64 Linux and systemd.
 
-The headless CLI discovers official LFS releases, imports a pinned systemd Git book into SQLite, and generates a dry-run plan with source and patch checksums, bootstrap stages, and reference commands. It can build the reviewed LFS 13.1 cross-toolchain first passes and stage Bzip2 in a new directory. The graphical builder, complete base system, and installed package manager are future milestones.
+The headless CLI discovers official LFS releases, imports a pinned systemd Git book into SQLite, and generates a dry-run plan with source and patch checksums, bootstrap stages, and reference commands. It can build the reviewed LFS 13.1 cross-toolchain and stage the Linux API headers and Glibc in a new sysroot. It can also stage Bzip2 in a separate directory. The graphical builder, complete base system, and installed package manager are future milestones.
 
 ## Install
 
@@ -41,12 +41,12 @@ Use the LFS 13.1 revision imported above. `build-check --bootstrap` checks the u
 
 ```sh
 klinix build-check --bootstrap
-klinix --db ./catalog.sqlite3 build-package chapter05/gcc-pass1 --revision "$revision" --dry-run
-klinix --db ./catalog.sqlite3 build-package chapter05/gcc-pass1 --revision "$revision" \
+klinix --db ./catalog.sqlite3 build-package chapter05/glibc --revision "$revision" --dry-run
+klinix -v --db ./catalog.sqlite3 build-package chapter05/glibc --revision "$revision" \
   --sources ./materials --target ./lfs-sysroot --jobs 2
 ```
 
-Use the filenames and URLs in the preview's `inputs` and `prerequisites` to populate `materials`. The GCC recipe first builds Binutils in the same private sysroot. Use `chapter05/binutils-pass1` to build just the assembler, linker, and related tools. The published root contains the cross tools under `tools/` and a build manifest under `var/lib/klinix/`. [Directory build details](docs/directory-build.md)
+Use the filenames and URLs in the preview's `inputs` and nested `prerequisites` to populate `materials`. Klinix builds Binutils, GCC, the Linux API headers, and Glibc in one private sysroot. Use `chapter05/binutils-pass1`, `chapter05/gcc-pass1`, or `chapter05/linux-headers` for a smaller build. The combined root contains the cross tools under `tools/`, the target headers and libraries under `usr/`, and a manifest under `var/lib/klinix/`. [Directory build details](docs/directory-build.md)
 
 ## Build the reviewed Bzip2 package
 

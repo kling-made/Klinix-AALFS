@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- Added the Linux API headers and cross-Glibc stages for the pinned LFS 13.1 sysroot.
+- Build transitive prerequisites in order and validate the staged loader, startup files, and libc with a dynamically linked program before publishing.
+- Preserve contained source symlinks during extraction and record the merged library layout in the build manifest.
+
 ## 0.3.0
 
 - Added reviewed LFS 13.1 Binutils and GCC pass 1 adapters with an isolated sysroot and bootstrap host checks.

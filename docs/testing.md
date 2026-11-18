@@ -6,3 +6,5 @@
 4. Run privileged tests, filesystem image tests, chroot tests, and QEMU tests only with explicit opt-in and isolated targets.
 
 Set `KLINIX_TEST_BOOTSTRAP_SOURCES` to the directory of pinned cross-toolchain archives to enable the real Binutils test. Also set `KLINIX_TEST_GCC=1` to run the longer Binutils-to-GCC integration test. Both use `KLINIX_TEST_LFS_SOURCE` and `KLINIX_TEST_LFS_REVISION` for LFS 13.1 and require a working rootless Bubblewrap environment.
+
+Set `KLINIX_TEST_SYSROOT_SOURCES` to a directory containing all the archives and patches from the `chapter05/glibc` build preview to run the four-stage Glibc integration test. The test verifies the staged Linux headers, ELF interpreter, and actual libc used at runtime.

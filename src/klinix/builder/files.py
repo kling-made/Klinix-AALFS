@@ -15,7 +15,7 @@ from klinix.errors import KlinixError
 from klinix.sources import open_source, verify_file
 
 INPUT_LIMIT = 192 * 1024 * 1024
-UNPACK_LIMIT = 1536 * 1024 * 1024
+UNPACK_LIMIT = 2 * 1024 * 1024 * 1024
 ARCHIVE_MEMBER_LIMIT = 200_000
 OUTPUT_ENTRY_LIMIT = 8_192
 OUTPUT_LIMIT = 2 * 1024 * 1024 * 1024
@@ -37,12 +37,19 @@ def stage_input(source: Path, destination: Path, approved: ApprovedInput) -> Non
     verify_file(destination, approved.artifact)
 
 
+def _relative_link_inside(link: str, target: str) -> bool:
+    logical = posixpath.normpath(posixpath.join(posixpath.dirname(link), target))
+    return bool(target) and not posixpath.isabs(target) and logical != ".." and not logical.startswith("../")
+
+
 def unpack_archive(archive: Path, destination: Path, top: str) -> None:
-    """Extract bounded regular members into a fresh private work directory."""
+    """Extract bounded members, creating safe relative symlinks after regular files."""
     destination.mkdir(exist_ok=True)
-    if os.path.lexists(destination / top):
+    source_root = destination / top
+    if os.path.lexists(source_root):
         raise KlinixError(f"Archive source root already exists: {top}")
     seen = set()
+    symlinks = []
     size = 0
     try:
         with tarfile.open(archive, mode="r|*") as tar:
@@ -61,6 +68,12 @@ def unpack_archive(archive: Path, destination: Path, top: str) -> None:
                 if member.isdir():
                     path.mkdir(parents=True, exist_ok=True)
                     continue
+                if member.issym() and len(components) > 1:
+                    if not _relative_link_inside(path.relative_to(source_root).as_posix(), member.linkname):
+                        raise KlinixError(f"Archive path escapes the reviewed source tree: {member.name!r}")
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    symlinks.append((path, member.linkname))
+                    continue
                 if not member.isfile() or member.issparse() or member.size < 0 or len(components) == 1:
                     raise KlinixError(f"Unsupported archive entry: {member.name!r}")
                 size += member.size
@@ -75,7 +88,18 @@ def unpack_archive(archive: Path, destination: Path, top: str) -> None:
                         stream.write(chunk)
                 path.chmod(0o755 if member.mode & 0o111 else 0o644)
                 os.utime(path, (member.mtime, member.mtime))
-    except (OSError, tarfile.TarError, EOFError) as exc:
+        # Creating a parent directory for another entry must never create a path
+        # that the archive also attempts to declare as a symlink.
+        for path, _ in symlinks:
+            if os.path.lexists(path):
+                raise KlinixError(f"Archive symlink conflicts with another entry: {path.relative_to(source_root)}")
+        for path, target in symlinks:
+            path.symlink_to(target)
+        resolved_root = source_root.resolve()
+        for path, _ in symlinks:
+            if not path.resolve(strict=True).is_relative_to(resolved_root):
+                raise KlinixError(f"Archive symlink escapes the reviewed source tree: {path.relative_to(source_root)}")
+    except (OSError, RuntimeError, tarfile.TarError, EOFError) as exc:
         raise KlinixError(f"Cannot unpack the reviewed source archive: {exc}") from exc
 
 
@@ -97,14 +121,24 @@ def new_target(path: Path) -> Path:
     return target
 
 
-def inventory(root: Path, required: tuple[str, ...], *, bootstrap: bool = False) -> list[dict]:
+def inventory(
+    root: Path, required: tuple[str, ...], *, bootstrap: bool = False,
+    directories: tuple[str, ...] | None = None, symlinks: tuple[str, ...] = (),
+) -> list[dict]:
     """Record regular files and safe relative links in a completed staging root."""
     if not stat.S_ISDIR(root.lstat().st_mode):
         raise KlinixError("The staged root is not a directory")
     entries = list(root.iterdir())
-    prefix = "tools" if bootstrap else "usr"
-    if len(entries) != 1 or entries[0].name != prefix or not stat.S_ISDIR(entries[0].lstat().st_mode):
-        raise KlinixError(f"Staged output must contain a regular {prefix} directory only")
+    if directories is None:
+        prefix = "tools" if bootstrap else "usr"
+        if tuple(path.name for path in entries) != (prefix,):
+            raise KlinixError(f"Staged output must contain a regular {prefix} directory only")
+        directories = (prefix,)
+    for entry in entries:
+        mode = entry.lstat().st_mode
+        if (entry.name in directories and stat.S_ISDIR(mode)) or (entry.name in symlinks and stat.S_ISLNK(mode)):
+            continue
+        raise KlinixError(f"Unexpected root entry in staged output: {entry.name!r}")
     pending = entries
     seen = 0
     total_size = 0
@@ -125,8 +159,7 @@ def inventory(root: Path, required: tuple[str, ...], *, bootstrap: bool = False)
             target = os.readlink(path)
             if Path(target).is_absolute():
                 raise KlinixError(f"Staged symlink must use a relative target: {relative!r}")
-            logical = posixpath.normpath(posixpath.join(posixpath.dirname(relative), target))
-            if logical == ".." or logical.startswith("../"):
+            if not _relative_link_inside(relative, target):
                 raise KlinixError(f"Staged symlink escapes the target: {relative!r}")
             try:
                 resolved = path.resolve(strict=True)

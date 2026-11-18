@@ -18,6 +18,21 @@ MANIFEST = Path("var/lib/klinix/build-manifest.json")
 ENVIRONMENT = "isolated-host-toolchain"
 
 
+def build_order(build: PackageBuild) -> tuple[PackageBuild, ...]:
+    """Schedule reviewed prerequisites before the stage that consumes them."""
+    ordered = {}
+
+    def visit(stage: PackageBuild) -> None:
+        if stage.recipe in ordered:
+            return
+        for prerequisite in stage.prerequisites:
+            visit(prerequisite)
+        ordered[stage.recipe] = stage
+
+    visit(build)
+    return tuple(ordered.values())
+
+
 def preview(build: PackageBuild) -> dict:
     output = {
         "book": asdict(build.pin),
@@ -59,7 +74,7 @@ def run_build(build: PackageBuild, source_dir: Path, target_path: Path) -> dict:
     target = new_target(target_path)
     sandbox = Bubblewrap(bootstrap=build.bootstrap)
     sandbox.probe()
-    stages = (*build.prerequisites, build)
+    stages = build_order(build)
     log_path = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -68,6 +83,7 @@ def run_build(build: PackageBuild, source_dir: Path, target_path: Path) -> dict:
             prefix=".klinix-build-", dir=target.parent, ignore_cleanup_errors=True,
         ) as temp:
             log_path = Path(log.name)
+            LOGGER.info("Build log at %s", log_path)
             workspace = Path(temp)
             work = workspace / "work"
             root = work / "root"
@@ -85,15 +101,22 @@ def run_build(build: PackageBuild, source_dir: Path, target_path: Path) -> dict:
                 shutil.rmtree(work / "source")
                 shutil.rmtree(inputs)
             required = tuple(path for stage in stages for path in stage.required_output)
-            records = inventory(root, required, bootstrap=build.bootstrap)
+            directories = tuple(name for stage in stages for name in stage.root_directories)
+            symlinks = tuple(name for stage in stages for name in stage.root_symlinks)
+            records = inventory(root, required, bootstrap=build.bootstrap, directories=directories, symlinks=symlinks)
             manifest = {
                 **preview(build),
                 "schema": 1,
                 "files": records,
             }
             manifest_path = root / MANIFEST
-            manifest_path.parent.mkdir(parents=True)
-            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            for parent in (root / "var", root / "var/lib"):
+                if parent.is_symlink():
+                    raise KlinixError(f"Manifest parent must be a real directory: {parent.relative_to(root)}")
+                parent.mkdir(exist_ok=True)
+            manifest_path.parent.mkdir()
+            with manifest_path.open("x", encoding="utf-8") as stream:
+                stream.write(json.dumps(manifest, indent=2) + "\n")
             log.flush()
             publish(root, target)
     except (OSError, KlinixError) as exc:
