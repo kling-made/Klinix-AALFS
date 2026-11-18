@@ -44,8 +44,9 @@ def _parser() -> argparse.ArgumentParser:
     importer.add_argument("source", type=Path)
     importer.add_argument("--expect-revision", type=_revision)
 
-    commands.add_parser("build-check", help="check the host toolchain and Bubblewrap isolation")
-    builder = commands.add_parser("build-package", help="build one reviewed package into a new directory")
+    check = commands.add_parser("build-check", help="check the host toolchain and Bubblewrap isolation")
+    check.add_argument("--bootstrap", action="store_true", help="check cross-toolchain bootstrap prerequisites")
+    builder = commands.add_parser("build-package", help="build a reviewed package and its stages into a new directory")
     builder.add_argument("recipe", help="exact reviewed chapter/section ID")
     builder.add_argument("--revision", type=_revision, required=True, help="full imported Git object ID")
     builder.add_argument("--sources", type=Path, help="directory of local source archives and patches")
@@ -75,7 +76,7 @@ def _run(args: argparse.Namespace) -> dict | list:
     if args.command == "books" and args.book_action == "discover":
         return [asdict(release) for release in LfsProvider().discover()]
     if args.command == "build-check":
-        Bubblewrap().probe()
+        Bubblewrap(bootstrap=args.bootstrap).probe()
         return {"ready": True, "environment": ENVIRONMENT, "sandbox": "bubblewrap"}
 
     settings = Settings.load(args.config)

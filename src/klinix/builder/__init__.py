@@ -2,12 +2,14 @@
 
 import json
 import logging
+import shutil
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
+from typing import BinaryIO
 
 from klinix.builder.files import inventory, new_target, publish, stage_input, unpack_archive
-from klinix.builder.recipes import PackageBuild
+from klinix.builder.recipes import SYSROOT, TARGET_TRIPLET, PackageBuild
 from klinix.builder.sandbox import Bubblewrap
 from klinix.errors import KlinixError
 
@@ -17,7 +19,7 @@ ENVIRONMENT = "isolated-host-toolchain"
 
 
 def preview(build: PackageBuild) -> dict:
-    return {
+    output = {
         "book": asdict(build.pin),
         "recipe": build.recipe,
         "package": asdict(build.package),
@@ -29,12 +31,35 @@ def preview(build: PackageBuild) -> dict:
         ],
         "commands": [asdict(command) for command in build.commands],
     }
+    if build.bootstrap:
+        output.update(sysroot=SYSROOT, target_triplet=TARGET_TRIPLET, source_tree=build.source_root)
+    if build.prerequisites:
+        output["prerequisites"] = [preview(stage) for stage in build.prerequisites]
+    return output
+
+
+def _run_stage(build: PackageBuild, sandbox: Bubblewrap, work: Path, inputs: Path, log: BinaryIO) -> None:
+    sources = work / "source"
+    source = sources / build.source_root
+    log.write(f"Klinix {build.adapter} / {build.pin.revision}\n".encode())
+    for approved in build.inputs:
+        filename = approved.filename
+        if approved.artifact.kind == "source":
+            top = filename.removesuffix(".tar.gz").removesuffix(".tar.xz")
+            unpack_archive(inputs / filename, sources, top)
+            if approved.unpack_as is not None:
+                (sources / top).rename(source / approved.unpack_as)
+    for command in build.commands:
+        LOGGER.info("%s", command.label)
+        cwd = (Path("/work/source") / build.source_root / command.cwd).as_posix()
+        sandbox.run(work, cwd, inputs, command.argv, log, timeout=command.timeout, bootstrap=build.bootstrap)
 
 
 def run_build(build: PackageBuild, source_dir: Path, target_path: Path) -> dict:
     target = new_target(target_path)
-    sandbox = Bubblewrap()
+    sandbox = Bubblewrap(bootstrap=build.bootstrap)
     sandbox.probe()
+    stages = (*build.prerequisites, build)
     log_path = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -44,22 +69,23 @@ def run_build(build: PackageBuild, source_dir: Path, target_path: Path) -> dict:
         ) as temp:
             log_path = Path(log.name)
             workspace = Path(temp)
-            inputs = workspace / "inputs"
             work = workspace / "work"
             root = work / "root"
-            inputs.mkdir()
             root.mkdir(parents=True)
             (work / "home").mkdir()
-            log.write(f"Klinix {build.adapter} / {build.pin.revision}\n".encode())
-            for approved in build.inputs:
-                filename = approved.filename
-                stage_input(source_dir / filename, inputs / filename, approved)
-                log.write(f"Verified {filename}\n".encode())
-            unpack_archive(inputs / f"{build.source_root}.tar.gz", work / "source", build.source_root)
-            for command in build.commands:
-                LOGGER.info("%s", command.label)
-                sandbox.run(work, f"/work/source/{build.source_root}", inputs, command.argv, log)
-            records = inventory(root, build.required_output)
+            input_dirs = tuple(workspace / f"inputs-{index}" for index in range(len(stages)))
+            for stage, inputs in zip(stages, input_dirs):
+                inputs.mkdir()
+                for approved in stage.inputs:
+                    filename = approved.filename
+                    stage_input(source_dir / filename, inputs / filename, approved)
+                    log.write(f"Verified {filename}\n".encode())
+            for stage, inputs in zip(stages, input_dirs):
+                _run_stage(stage, sandbox, work, inputs, log)
+                shutil.rmtree(work / "source")
+                shutil.rmtree(inputs)
+            required = tuple(path for stage in stages for path in stage.required_output)
+            records = inventory(root, required, bootstrap=build.bootstrap)
             manifest = {
                 **preview(build),
                 "schema": 1,

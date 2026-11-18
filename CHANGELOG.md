@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- Added reviewed LFS 13.1 Binutils and GCC pass 1 adapters with an isolated sysroot and bootstrap host checks.
+- Added ordered prerequisite execution, XZ source archives, and hardlink tracking for groups contained in the staged target.
+- Added assembler/linker and freestanding C and C++ checks before publishing a toolchain root.
+
 ## 0.2.0
 
 - Added an isolated host preflight and executable dry-run preview for the reviewed LFS 13.1 Bzip2 adapter.

@@ -185,3 +185,119 @@ Path('/work/output').write_text('staged')
         Bubblewrap().run(work, "/work", inputs, ("/usr/bin/python3", "-c", script), log)
     assert (work / "output").read_text() == "staged"
     assert (inputs / "source").read_text() == "verified bytes"
+
+
+def test_xz_extract_preserves_timestamps_and_executable_mode(tmp_path):
+    archive = tmp_path / "source.tar.xz"
+    with tarfile.open(archive, mode="w:xz") as tar:
+        entry = tarfile.TarInfo("package/configure")
+        entry.size = 4
+        entry.mode = 0o755
+        entry.mtime = 1234567890
+        tar.addfile(entry, io.BytesIO(b"test"))
+    destination = tmp_path / "source"
+    unpack_archive(archive, destination, "package")
+    script = destination / "package/configure"
+    assert script.read_bytes() == b"test"
+    assert script.stat().st_mtime == 1234567890
+    assert script.stat().st_mode & 0o111
+
+
+def test_bootstrap_hardlinks_must_stay_inside_target(tmp_path):
+    root = tmp_path / "root"
+    tools = root / "tools"
+    tools.mkdir(parents=True)
+    original = tools / "original"
+    alias = tools / "alias"
+    original.write_text("data")
+    os.link(original, alias)
+    files = {item["path"]: item for item in inventory(root, (), bootstrap=True)}
+    group = [item for item in files.values() if item["kind"] == "hardlink"]
+    assert group == [{"path": "tools/original", "kind": "hardlink", "target": "tools/alias"}]
+    os.link(original, tmp_path / "outside")
+    with pytest.raises(KlinixError, match="hardlink escapes the target"):
+        inventory(root, (), bootstrap=True)
+
+
+@pytest.fixture
+def pinned_book():
+    location = os.environ.get("KLINIX_TEST_LFS_SOURCE")
+    if not location or os.environ.get("KLINIX_TEST_LFS_REVISION") != APPROVED_REVISION:
+        pytest.skip("local pinned LFS 13.1 Git checkout required")
+    return LfsProvider().import_local(Path(location), APPROVED_REVISION)
+
+
+def test_bootstrap_preview_contains_only_reviewed_commands(pinned_book, tmp_path, capsys):
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    args = ["--db", str(db), "build-package", "chapter05/gcc-pass1", "--revision", APPROVED_REVISION,
+            "--jobs", "3", "--dry-run"]
+    assert main(args) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["mode"] == "dry-run"
+    assert output["target_triplet"] == "x86_64-lfs-linux-gnu"
+    assert output["sysroot"] == "/mnt/lfs"
+    assert output["prerequisites"][0]["recipe"] == "chapter05/binutils-pass1"
+    assert {"gmp", "mpfr", "mpc"} == {item["filename"].split("-")[0] for item in output["inputs"]
+                                    if not item["filename"].startswith("gcc-")}
+    compile_command = next(command for command in output["commands"] if "-j3" in command["argv"])
+    assert compile_command["cwd"] == "build"
+    assert not list(tmp_path.glob("klinix-build-*.log"))
+
+
+def test_bootstrap_preverifies_later_materials(pinned_book, tmp_path, monkeypatch):
+    from klinix import builder
+
+    class ProbeOnly:
+        def __init__(self, *, bootstrap):
+            assert bootstrap
+
+        def probe(self):
+            pass
+
+    monkeypatch.setattr(builder, "Bubblewrap", ProbeOnly)
+    build = reviewed_build(pinned_book, "chapter05/gcc-pass1", 1)
+    materials = tmp_path / "materials"
+    materials.mkdir()
+    staged = []
+
+    def stage_input(path, _dest, approval):
+        assert path.name == approval.filename
+        staged.append(approval.filename)
+        if approval.unpack_as == "mpc":
+            raise KlinixError("invalid final dependency")
+
+    monkeypatch.setattr(builder, "stage_input", stage_input)
+    target = tmp_path / "target"
+    with pytest.raises(KlinixError, match="invalid final dependency.*Build log"):
+        run_build(build, materials, target)
+    assert len(staged) == 5
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("recipe", ["chapter05/binutils-pass1", "chapter05/gcc-pass1"])
+def test_real_bootstrap_pass(recipe, pinned_book, tmp_path, capsys):
+    location = os.environ.get("KLINIX_TEST_BOOTSTRAP_SOURCES")
+    if not location or (recipe.endswith("gcc-pass1") and not os.environ.get("KLINIX_TEST_GCC")):
+        pytest.skip("official bootstrap materials and rootless Bubblewrap required")
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    target = tmp_path / "sysroot"
+    assert main(["--db", str(db), "build-package", recipe, "--revision", APPROVED_REVISION,
+                 "--sources", location, "--target", str(target), "--jobs", "2"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    manifest = json.loads((target / MANIFEST).read_text())
+    triplet = "x86_64-lfs-linux-gnu"
+    assert manifest["target_triplet"] == triplet
+    assert manifest["sysroot"] == "/mnt/lfs"
+    assert manifest["recipe"] == recipe
+    assert (target / f"tools/bin/{triplet}-as").is_file()
+    assert (target / f"tools/bin/{triplet}-ld").is_file()
+    log = Path(output["log"]).read_text()
+    assert "Advanced Micro Devices X86-64" in log
+    if recipe.endswith("gcc-pass1"):
+        assert manifest["prerequisites"][0]["recipe"] == "chapter05/binutils-pass1"
+        assert (target / f"tools/bin/{triplet}-gcc").is_file()
+        assert (target / f"tools/bin/{triplet}-g++").is_file()
+        assert "Klinix binutils-pass1-v1" in log.split("Klinix gcc-pass1-v1", 1)[0]
+        assert "File: cxx.o" in log

@@ -16,6 +16,6 @@ The CLI calls the headless Python backend. The future Builder and installed GUI 
 
 The LFS provider reads DocBook from Git objects. It follows selected chapters in book order, extracts package metadata and display-only command blocks, and connects consecutive sections with ordering edges. LFS Appendix C describes dependencies across multiple bootstrap environments, sometimes with cycles. The initial provider uses the explicit book sequence to model bootstrap ordering. The graph supports classified edges for future reviewed package dependencies.
 
-The first reviewed adapter stages a Bzip2 package through a fixed host-toolchain sandbox. Bootstrap adapters and a controlled target toolchain will need distinct execution contexts. Installation ownership and recovery will share a transaction boundary. GUI workers will consume progress events produced by the backend.
+The Bzip2 adapter stages a package through a fixed host-toolchain sandbox. The bootstrap adapters also mount a private sysroot at `/mnt/lfs`, where GCC pass 1 can use the Binutils installed by the preceding stage. Later temporary-tool and chroot stages will need controlled target execution contexts. Installation ownership and recovery will share a transaction boundary. GUI workers will consume progress events produced by the backend.
 
 See [recipe format](recipes.md), [database schema](database.md), and [security model](security.md).

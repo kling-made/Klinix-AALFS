@@ -14,10 +14,11 @@ from klinix.builder.recipes import ApprovedInput
 from klinix.errors import KlinixError
 from klinix.sources import open_source, verify_file
 
-INPUT_LIMIT = 4 * 1024 * 1024
-UNPACK_LIMIT = 32 * 1024 * 1024
-MEMBER_LIMIT = 512
-OUTPUT_LIMIT = 128 * 1024 * 1024
+INPUT_LIMIT = 192 * 1024 * 1024
+UNPACK_LIMIT = 1536 * 1024 * 1024
+ARCHIVE_MEMBER_LIMIT = 200_000
+OUTPUT_ENTRY_LIMIT = 8_192
+OUTPUT_LIMIT = 2 * 1024 * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024
 
 
@@ -38,19 +39,23 @@ def stage_input(source: Path, destination: Path, approved: ApprovedInput) -> Non
 
 def unpack_archive(archive: Path, destination: Path, top: str) -> None:
     """Extract bounded regular members into a fresh private work directory."""
-    destination.mkdir()
+    destination.mkdir(exist_ok=True)
+    if os.path.lexists(destination / top):
+        raise KlinixError(f"Archive source root already exists: {top}")
     seen = set()
     size = 0
     try:
-        with tarfile.open(archive, mode="r|gz") as tar:
+        with tarfile.open(archive, mode="r|*") as tar:
             for member in tar:
                 components = member.name.split("/")
                 if (components[0] != top or len(components) > 16
                         or any(part in {"", ".", ".."} for part in components)):
                     raise KlinixError(f"Archive path escapes the reviewed source tree: {member.name!r}")
                 relative = Path(*components)
-                if relative in seen or len(seen) >= MEMBER_LIMIT:
-                    raise KlinixError("Archive contains duplicate entries or too many members")
+                if relative in seen:
+                    raise KlinixError(f"Duplicate archive entry: {member.name!r}")
+                if len(seen) >= ARCHIVE_MEMBER_LIMIT:
+                    raise KlinixError("Archive exceeds the reviewed member limit")
                 seen.add(relative)
                 path = destination / relative
                 if member.isdir():
@@ -69,6 +74,7 @@ def unpack_archive(archive: Path, destination: Path, top: str) -> None:
                     for chunk in iter(lambda: data.read(CHUNK_SIZE), b""):
                         stream.write(chunk)
                 path.chmod(0o755 if member.mode & 0o111 else 0o644)
+                os.utime(path, (member.mtime, member.mtime))
     except (OSError, tarfile.TarError, EOFError) as exc:
         raise KlinixError(f"Cannot unpack the reviewed source archive: {exc}") from exc
 
@@ -91,24 +97,26 @@ def new_target(path: Path) -> Path:
     return target
 
 
-def inventory(root: Path, required: tuple[str, ...]) -> list[dict]:
+def inventory(root: Path, required: tuple[str, ...], *, bootstrap: bool = False) -> list[dict]:
     """Record regular files and safe relative links in a completed staging root."""
     if not stat.S_ISDIR(root.lstat().st_mode):
         raise KlinixError("The staged root is not a directory")
     entries = list(root.iterdir())
-    if len(entries) != 1 or entries[0].name != "usr" or not stat.S_ISDIR(entries[0].lstat().st_mode):
-        raise KlinixError("Staged output must contain a regular usr directory only")
+    prefix = "tools" if bootstrap else "usr"
+    if len(entries) != 1 or entries[0].name != prefix or not stat.S_ISDIR(entries[0].lstat().st_mode):
+        raise KlinixError(f"Staged output must contain a regular {prefix} directory only")
     pending = entries
     seen = 0
     total_size = 0
     records = {}
+    links: dict[tuple[int, int], tuple[int, list[str]]] = {}
     while pending:
         path = pending.pop()
         seen += 1
         relative = path.relative_to(root).as_posix()
         metadata = path.lstat()
         mode = metadata.st_mode
-        if seen > MEMBER_LIMIT or mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX):
+        if seen > OUTPUT_ENTRY_LIMIT or mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX):
             raise KlinixError(f"Unsupported staged permissions or output size at {relative!r}")
         if stat.S_ISDIR(mode):
             pending.extend(path.iterdir())
@@ -127,7 +135,7 @@ def inventory(root: Path, required: tuple[str, ...]) -> list[dict]:
             if not resolved.is_relative_to(root):
                 raise KlinixError(f"Staged symlink escapes the target: {relative!r}")
             records[relative] = {"path": relative, "kind": "symlink", "target": target}
-        elif stat.S_ISREG(mode) and metadata.st_nlink == 1:
+        elif stat.S_ISREG(mode) and (bootstrap or metadata.st_nlink == 1):
             total_size += metadata.st_size
             if total_size > OUTPUT_LIMIT:
                 raise KlinixError("Staged package exceeds the output size limit")
@@ -135,8 +143,17 @@ def inventory(root: Path, required: tuple[str, ...]) -> list[dict]:
                 sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
             records[relative] = {"path": relative, "kind": "file", "sha256": sha256,
                                  "mode": stat.S_IMODE(mode), "bytes": metadata.st_size}
+            if metadata.st_nlink > 1:
+                identifier = metadata.st_dev, metadata.st_ino
+                links.setdefault(identifier, (metadata.st_nlink, []))[1].append(relative)
         else:
             raise KlinixError(f"Unsupported staged file type at {relative!r}")
+    for count, names in links.values():
+        if len(names) != count:
+            raise KlinixError(f"Staged hardlink escapes the target: {min(names)!r}")
+        first, *aliases = sorted(names)
+        for name in aliases:
+            records[name] = {"path": name, "kind": "hardlink", "target": first}
     missing = set(required) - records.keys()
     if missing:
         raise KlinixError(f"Build did not produce expected output: {', '.join(sorted(missing))}")

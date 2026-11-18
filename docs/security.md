@@ -10,7 +10,7 @@
 
 ## Current directory execution
 
-Compiled-in adapter selection requires the exact reviewed book revision and archive and patch SHA-256 digests. Commands run as an unprivileged user in Bubblewrap with isolated namespaces, a cleared environment, read-only host toolchain directories and inputs, and a private writable work directory. The build process receives neither the final target nor the user's home directory. Namespace setup failure ends execution during preflight. The [directory build specification](directory-build.md) documents the staging and publication boundary.
+Adapter selection requires the exact reviewed book revision and archive and patch SHA-256 digests. Commands run as an unprivileged user in Bubblewrap with isolated namespaces, a cleared environment, read-only host toolchain directories and inputs, and a private writable work directory. The build process receives neither the final target nor the user's home directory. Bootstrap stages install into a shared private sysroot. Namespace setup failure ends execution during preflight. The [directory build specification](directory-build.md) documents the staging and publication boundary.
 
 ## Execution requirements
 
