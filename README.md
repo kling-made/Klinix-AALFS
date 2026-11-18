@@ -2,7 +2,7 @@
 
 Klinix is an independent Advanced Automated Linux From Scratch builder and source package manager for x86-64 Linux and systemd.
 
-The initial release is a headless CLI. It discovers official LFS releases, imports a pinned systemd Git book into SQLite, and generates a dry-run plan with source and patch checksums, bootstrap stages, and reference commands. The graphical builder, package installation, and bootable system builds are future milestones.
+The headless CLI discovers official LFS releases, imports a pinned systemd Git book into SQLite, and generates a dry-run plan with source and patch checksums, bootstrap stages, and reference commands. It can also compile and stage the reviewed Bzip2 package in a new directory. The graphical builder, complete base system, and installed package manager are future milestones.
 
 ## Install
 
@@ -34,6 +34,25 @@ Pass a package name or a stage ID such as `chapter05/binutils-pass1` after the r
 To check an archive or patch you've already downloaded, run `klinix --db ./catalog.sqlite3 verify-source --revision "$revision" path/to/file`. The command matches the published checksum and accepts `--url` to identify a renamed file.
 
 The default catalog lives under `$XDG_STATE_HOME/klinix` or `~/.local/state/klinix`. Use `--config path.toml` to set `database`, `recommended`, and `optional`. Relative database paths resolve from the configuration file's directory. Explicit CLI flags take precedence.
+
+## Build the reviewed Bzip2 package
+
+Use the imported LFS 13.1 revision above. The build requires an unprivileged x86-64 Linux account, Bubblewrap with user namespaces enabled, GCC and its development libraries, binutils, make, patch, sed, and coreutils. The compiler and libc come from the host toolchain exposed read-only inside the sandbox.
+
+```sh
+klinix build-check
+klinix --db ./catalog.sqlite3 build-package chapter08/bzip2 --revision "$revision" --dry-run
+
+mkdir -p ./materials
+curl --fail --location --output ./materials/bzip2-1.0.8.tar.gz \
+  https://www.sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz
+curl --fail --location --output ./materials/bzip2-1.0.8-install_docs-1.patch \
+  https://www.linuxfromscratch.org/patches/lfs/13.1/bzip2-1.0.8-install_docs-1.patch
+klinix --db ./catalog.sqlite3 build-package chapter08/bzip2 --revision "$revision" \
+  --sources ./materials --target ./bzip2-root --jobs 2
+```
+
+Choose a target name that does not exist. The command prints the target path, its `var/lib/klinix/build-manifest.json`, and the path to the build log. This is a single-package staging root. The [directory build specification](docs/directory-build.md) describes its output and isolation.
 
 ## Develop
 

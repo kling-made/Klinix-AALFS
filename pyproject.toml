@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "klinix"
-version = "0.1.0"
+version = "0.2.0"
 description = "Advanced Automated Linux From Scratch"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
-license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+license-files = ["LICENSE", "LICENSES/*.txt", "THIRD_PARTY_NOTICES.md"]
 
 [project.optional-dependencies]
 test = ["pytest>=8"]
@@ -22,6 +22,9 @@ Repository = "https://github.com/kling-made/Klinix-AALFS"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"klinix.builder" = ["approvals.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

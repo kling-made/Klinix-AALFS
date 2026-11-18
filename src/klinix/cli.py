@@ -8,6 +8,9 @@ from importlib.metadata import version
 from pathlib import Path
 
 from klinix.books.lfs import LfsProvider
+from klinix.builder import ENVIRONMENT, preview, run_build
+from klinix.builder.recipes import reviewed_build
+from klinix.builder.sandbox import Bubblewrap
 from klinix.catalog import Catalog
 from klinix.config import Settings
 from klinix.dependencies import Policy
@@ -41,6 +44,15 @@ def _parser() -> argparse.ArgumentParser:
     importer.add_argument("source", type=Path)
     importer.add_argument("--expect-revision", type=_revision)
 
+    commands.add_parser("build-check", help="check the host toolchain and Bubblewrap isolation")
+    builder = commands.add_parser("build-package", help="build one reviewed package into a new directory")
+    builder.add_argument("recipe", help="exact reviewed chapter/section ID")
+    builder.add_argument("--revision", type=_revision, required=True, help="full imported Git object ID")
+    builder.add_argument("--sources", type=Path, help="directory of local source archives and patches")
+    builder.add_argument("--target", type=Path, help="new output directory under an existing parent")
+    builder.add_argument("--jobs", type=int, default=1, help="parallel build jobs, between 1 and 64")
+    builder.add_argument("--dry-run", action="store_true", help="show reviewed commands without running them")
+
     for command, help_text in (
         ("packages", "list available recipes and package versions"),
         ("sources", "list source and patch verification metadata"),
@@ -62,6 +74,9 @@ def _parser() -> argparse.ArgumentParser:
 def _run(args: argparse.Namespace) -> dict | list:
     if args.command == "books" and args.book_action == "discover":
         return [asdict(release) for release in LfsProvider().discover()]
+    if args.command == "build-check":
+        Bubblewrap().probe()
+        return {"ready": True, "environment": ENVIRONMENT, "sandbox": "bubblewrap"}
 
     settings = Settings.load(args.config)
     catalog = Catalog(args.db.expanduser() if args.db else settings.database)
@@ -79,6 +94,13 @@ def _run(args: argparse.Namespace) -> dict | list:
             "added": added,
         }
     book = catalog.load(args.revision)
+    if args.command == "build-package":
+        build = reviewed_build(book, args.recipe, args.jobs)
+        if args.dry_run:
+            return {"mode": "dry-run", **preview(build)}
+        if args.sources is None or args.target is None:
+            raise KlinixError("build-package requires --sources and --target for execution")
+        return run_build(build, args.sources.expanduser(), args.target)
     if args.command == "packages":
         return [
             {"recipe": recipe.id, "chapter": recipe.id.split("/")[0],
@@ -106,4 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     except KlinixError as exc:
         LOGGER.error("%s", exc)
         return 1
+    except KeyboardInterrupt as exc:
+        LOGGER.error("%s", str(exc) or "Interrupted")
+        return 130
     return 0
