@@ -2,7 +2,7 @@
 
 Klinix is an independent Advanced Automated Linux From Scratch builder and source package manager for x86-64 Linux and systemd.
 
-The headless CLI discovers official LFS releases, imports a pinned systemd Git book into SQLite, and generates a dry-run plan with source and patch checksums, bootstrap stages, and reference commands. It can build the reviewed LFS 13.1 cross-toolchain and stage the Linux API headers and Glibc in a new sysroot. It can also stage Bzip2 in a separate directory. The graphical builder, complete base system, and installed package manager are future milestones.
+The headless CLI discovers official LFS releases, imports a pinned systemd Git book into SQLite, and generates a dry-run plan with source and patch checksums, bootstrap stages, and reference commands. It builds the reviewed LFS 13.1 cross-toolchain, Linux API headers, and Glibc in a new sysroot, then adds target libstdc++, M4, Ncurses, and Bash. It can also stage Bzip2 in a separate directory. The graphical builder, complete base system, and installed package manager are future milestones.
 
 ## Install
 
@@ -35,18 +35,18 @@ To check an archive or patch you've already downloaded, run `klinix --db ./catal
 
 The default catalog lives under `$XDG_STATE_HOME/klinix` or `~/.local/state/klinix`. Use `--config path.toml` to set `database`, `recommended`, and `optional`. Relative database paths resolve from the configuration file's directory. Explicit CLI flags take precedence.
 
-## Bootstrap the cross-toolchain
+## Bootstrap the cross-toolchain and temporary shell
 
 Use the LFS 13.1 revision imported above. `build-check --bootstrap` checks the unprivileged x86-64 build environment and host C++ toolchain. Keep several GB available in the target's parent directory.
 
 ```sh
 klinix build-check --bootstrap
-klinix --db ./catalog.sqlite3 build-package chapter05/glibc --revision "$revision" --dry-run
-klinix -v --db ./catalog.sqlite3 build-package chapter05/glibc --revision "$revision" \
+klinix --db ./catalog.sqlite3 build-package chapter06/bash --revision "$revision" --dry-run
+klinix -v --db ./catalog.sqlite3 build-package chapter06/bash --revision "$revision" \
   --sources ./materials --target ./lfs-sysroot --jobs 2
 ```
 
-Use the filenames and URLs in the preview's `inputs` and nested `prerequisites` to populate `materials`. Klinix builds Binutils, GCC, the Linux API headers, and Glibc in one private sysroot. Use `chapter05/binutils-pass1`, `chapter05/gcc-pass1`, or `chapter05/linux-headers` for a smaller build. The combined root contains the cross tools under `tools/`, the target headers and libraries under `usr/`, and a manifest under `var/lib/klinix/`. [Directory build details](docs/directory-build.md)
+Use the filenames and URLs in the preview's `inputs` and nested `prerequisites` to populate `materials`. The combined root contains the cross tools under `tools/`, the target headers, libraries, and temporary programs under `usr/`, and a manifest under `var/lib/klinix/`. Use an earlier recipe ID such as `chapter05/glibc` or `chapter06/m4` to stop after that stage. [Directory build details](docs/directory-build.md)
 
 ## Build the reviewed Bzip2 package
 

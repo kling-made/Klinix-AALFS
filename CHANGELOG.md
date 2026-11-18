@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.0
+
+- Added pinned builds for target libstdc++, GNU M4, Ncurses, and Bash, including the target `/bin/sh` link.
+- Check that a C++ program loads the staged libstdc++, M4 expands a macro, Ncurses reads the staged terminal database, and Bash runs in POSIX mode.
+- Verify and stage the GCC source once for the compiler and target C++ library stages.
+
 ## 0.4.0
 
 - Added the Linux API headers and cross-Glibc stages for the pinned LFS 13.1 sysroot.

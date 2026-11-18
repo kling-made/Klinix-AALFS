@@ -12,6 +12,9 @@ from klinix.sources import artifact_filename
 TARGET_TRIPLET = "x86_64-lfs-linux-gnu"
 SYSROOT = "/mnt/lfs"
 TOOLS = f"{SYSROOT}/tools"
+TARGET_LOADER = "/lib64/ld-linux-x86-64.so.2"
+TARGET_COMPILER = f"{TOOLS}/bin/{TARGET_TRIPLET}-gcc"
+CONFIG_SITE = f"{SYSROOT}/usr/share/config.site"
 BOOTSTRAP_HOST_TOOLS = (
     "bash", "bison", "diff", "find", "flex", "g++", "gawk", "grep", "m4", "makeinfo", "perl", "python3", "readlink",
 )
@@ -65,6 +68,10 @@ def reviewed_build(book: Book, recipe_id: str, jobs: int) -> PackageBuild:
         "gcc-pass1-v1": _gcc,
         "linux-headers-v1": _linux_headers,
         "glibc-cross-v1": _glibc,
+        "libstdcxx-pass1-v1": _libstdcxx,
+        "m4-cross-v1": _m4,
+        "ncurses-cross-v1": _ncurses,
+        "bash-cross-v1": _bash,
     }.get(adapter)
     if (book.pin.family, book.pin.edition) != ("lfs", "systemd") or factory is None:
         raise KlinixError(f"No reviewed build adapter for {recipe_id!r} at {book.pin.revision}")
@@ -264,7 +271,7 @@ def _glibc(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuil
     )
     patch = ("/usr/bin/patch", "--batch", "--forward", "-Np1", "-i")
     target_bin = f"{TOOLS}/bin/{TARGET_TRIPLET}"
-    loader = "/lib64/ld-linux-x86-64.so.2"
+    loader = TARGET_LOADER
     loader_target = "../lib/ld-linux-x86-64.so.2"
     commands = (
         Command("Prepare the target library directories", (
@@ -325,3 +332,154 @@ def _glibc(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuil
         bootstrap=True, prerequisites=prerequisites, root_directories=("usr", "lib64", "etc", "var"),
         root_symlinks=("lib",),
     )
+
+
+def _target_program(path: str) -> tuple[str, ...]:
+    return (SYSROOT + TARGET_LOADER, "--inhibit-cache", "--library-path", f"{SYSROOT}/usr/lib", SYSROOT + path)
+
+
+def _libstdcxx(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
+    package = recipe.package
+    if package is None or package.name != "gcc-libstdc++":
+        raise KlinixError("Pinned catalog lacks the reviewed target libstdc++ metadata")
+    source_root = f"gcc-{package.version}"
+    archive = _select_input(book, recipe, source_root + ".tar.xz", "source", approval["source_sha256"])
+    include = f"/tools/{TARGET_TRIPLET}/include/c++/{package.version}"
+    commands = (
+        Command("Create an out-of-tree libstdc++ build directory", ("/usr/bin/mkdir", "build")),
+        Command("Configure libstdc++ for the target", (
+            "/usr/bin/bash", "-ec", 'exec ../libstdc++-v3/configure --build="$(../config.guess)" "$@"',
+            "klinix", f"--host={TARGET_TRIPLET}", f"CC={TARGET_COMPILER}", f"CXX={TARGET_COMPILER}",
+            "CXXFLAGS=-O2", "--prefix=/usr", "--disable-multilib", "--disable-nls", "--disable-libstdcxx-pch",
+            f"--with-gxx-include-dir={include}",
+        ), cwd="build", timeout=600),
+        Command("Cross-compile libstdc++", ("/usr/bin/make", f"-j{jobs}"), cwd="build", timeout=3600),
+        Command("Install target C++ headers and libraries", (
+            "/usr/bin/make", f"DESTDIR={SYSROOT}", "install",
+        ), cwd="build", timeout=900),
+        Command("Remove libtool archives from the target", (
+            "/usr/bin/rm", "-f", *(f"{SYSROOT}/usr/lib/lib{name}.la" for name in ("stdc++", "stdc++exp", "stdc++fs", "supc++")),
+        )),
+        Command("Compile and run a program with target libstdc++", (
+            "/usr/bin/bash", "-ec",
+            r'printf "%s\n" "#include <iostream>" "#include <string>" '
+            "'int main() { std::cout << std::string(\"Klinix C++ runtime OK\") << std::endl; }' > cxx-probe.cc; "
+            '"$1" -H cxx-probe.cc -o cxx-probe > cxx.trace 2>&1 || { cat cxx.trace; exit 1; }; '
+            'grep -F "$2/iostream" cxx.trace; '
+            '"$3" --inhibit-cache --library-path "$4" --list ./cxx-probe > libraries.trace; '
+            'grep -F "$4/libstdc++.so.6" libraries.trace; '
+            '"$3" --inhibit-cache --library-path "$4" ./cxx-probe > cxx.out; '
+            'grep -Fx "Klinix C++ runtime OK" cxx.out',
+            "klinix", f"{TOOLS}/bin/{TARGET_TRIPLET}-g++", SYSROOT + include,
+            SYSROOT + TARGET_LOADER, f"{SYSROOT}/usr/lib",
+        ), cwd="build"),
+    )
+    glibc = reviewed_build(book, "chapter05/glibc", jobs)
+    required = (include.lstrip("/") + "/iostream", "usr/lib/libstdc++.so.6", "usr/lib/libstdc++.so")
+    return PackageBuild(book.pin, recipe.id, package, approval["adapter"], (archive,), source_root,
+                        commands, required, bootstrap=True, prerequisites=(glibc,))
+
+
+def _m4(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
+    package = recipe.package
+    if package is None or package.name != "m4":
+        raise KlinixError("Pinned catalog lacks the reviewed M4 metadata")
+    source_root = f"m4-{package.version}"
+    archive = _select_input(book, recipe, source_root + ".tar.xz", "source", approval["source_sha256"])
+    commands = (
+        Command("Create the target configure site directory", ("/usr/bin/mkdir", "-p", f"{SYSROOT}/usr/share")),
+        Command("Record target POSIX spawn support for GNU configure", (
+            "/usr/bin/bash", "-ec",
+            r'printf "%s\n" ac_cv_func_posix_spawn_file_actions_addchdir=yes '
+            'ac_cv_func_posix_spawn_file_actions_addfchdir=yes > "$1"',
+            "klinix", CONFIG_SITE,
+        )),
+        Command("Configure GNU M4 for the target", (
+            "/usr/bin/bash", "-ec", 'exec ./configure --build="$(build-aux/config.guess)" "$@"',
+            "klinix", f"CONFIG_SITE={CONFIG_SITE}", f"--host={TARGET_TRIPLET}",
+            f"CC={TARGET_COMPILER}", "--prefix=/usr",
+        ), timeout=600),
+        Command("Cross-compile GNU M4", ("/usr/bin/make", f"-j{jobs}"), timeout=1800),
+        Command("Install GNU M4 into the sysroot", ("/usr/bin/make", f"DESTDIR={SYSROOT}", "install"), timeout=600),
+        Command("Expand a macro with the staged GNU M4", (
+            "/usr/bin/bash", "-ec",
+            r"""printf '%s\n' 'changequote([,])dnl' 'define([klinix], [Klinix M4 OK])dnl' 'klinix' > probe.m4; """
+            '"$@" probe.m4 > probe.out; grep -Fx "Klinix M4 OK" probe.out',
+            "klinix", *_target_program("/usr/bin/m4"),
+        )),
+    )
+    libstdcxx = reviewed_build(book, "chapter05/libstdc++", jobs)
+    return PackageBuild(book.pin, recipe.id, package, approval["adapter"], (archive,), source_root,
+                        commands, ("usr/bin/m4", "usr/share/config.site"), bootstrap=True,
+                        prerequisites=(libstdcxx,))
+
+
+def _ncurses(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
+    package = recipe.package
+    if package is None or package.name != "ncurses":
+        raise KlinixError("Pinned catalog lacks the reviewed Ncurses metadata")
+    source_root = f"ncurses-{package.version}"
+    archive = _select_input(book, recipe, source_root + ".tar.gz", "source", approval["source_sha256"])
+    commands = (
+        Command("Create a native tic build directory", ("/usr/bin/mkdir", "build-host")),
+        Command("Configure the build-host tic", (
+            "../configure", f"--prefix={TOOLS}", "AWK=gawk",
+        ), cwd="build-host", timeout=600),
+        Command("Generate native tic headers", ("/usr/bin/make", "-C", "include"), cwd="build-host"),
+        Command("Compile the native terminfo compiler", (
+            "/usr/bin/make", f"-j{jobs}", "-C", "progs", "tic",
+        ), cwd="build-host", timeout=900),
+        Command("Stage native tic for use during cross-install", (
+            "/usr/bin/install", "-m", "755", "progs/tic", f"{TOOLS}/bin/tic",
+        ), cwd="build-host"),
+        Command("Configure target Ncurses and C++ bindings", (
+            "/usr/bin/bash", "-ec", 'exec ./configure --build="$(./config.guess)" "$@"',
+            "klinix", f"CONFIG_SITE={CONFIG_SITE}", "--prefix=/usr", f"--host={TARGET_TRIPLET}",
+            "--mandir=/usr/share/man", "--with-manpage-format=normal", "--with-shared", "--without-normal",
+            "--with-cxx-shared", "--without-debug", "--without-ada", "--disable-stripping", "AWK=gawk",
+        ), timeout=600),
+        Command("Cross-compile Ncurses", ("/usr/bin/make", f"-j{jobs}"), timeout=1800),
+        Command("Install target Ncurses and terminfo", (
+            "/usr/bin/make", f"DESTDIR={SYSROOT}", "install",
+        ), timeout=600),
+        Command("Expose libncurses through its wide-character library", (
+            "/usr/bin/ln", "-s", "libncursesw.so", f"{SYSROOT}/usr/lib/libncurses.so",
+        )),
+        Command("Select the wide-character Ncurses headers", (
+            "/usr/bin/sed", "-i", "s/^#if.*XOPEN.*$/#if 1/", f"{SYSROOT}/usr/include/curses.h",
+        )),
+        Command("Read staged xterm terminfo with target Ncurses", (
+            *_target_program("/usr/bin/infocmp"), "-A", f"{SYSROOT}/usr/share/terminfo", "xterm",
+        )),
+    )
+    m4 = reviewed_build(book, "chapter06/m4", jobs)
+    required = ("tools/bin/tic", "usr/bin/infocmp", "usr/include/curses.h", "usr/lib/libncurses.so")
+    return PackageBuild(book.pin, recipe.id, package, approval["adapter"], (archive,), source_root,
+                        commands, required, bootstrap=True, prerequisites=(m4,))
+
+
+def _bash(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
+    package = recipe.package
+    if package is None or package.name != "bash":
+        raise KlinixError("Pinned catalog lacks the reviewed Bash metadata")
+    source_root = f"bash-{package.version}"
+    archive = _select_input(book, recipe, source_root + ".tar.gz", "source", approval["source_sha256"])
+    commands = (
+        Command("Configure Bash for the target", (
+            "/usr/bin/bash", "-ec", 'exec ./configure --build="$(sh support/config.guess)" "$@"',
+            "klinix", f"CONFIG_SITE={CONFIG_SITE}", "--prefix=/usr", f"--host={TARGET_TRIPLET}",
+            "--without-bash-malloc", f"--docdir=/usr/share/doc/{source_root}",
+        ), timeout=600),
+        Command("Cross-compile Bash", ("/usr/bin/make", f"-j{jobs}"), timeout=1800),
+        Command("Install Bash into the sysroot", ("/usr/bin/make", f"DESTDIR={SYSROOT}", "install"), timeout=600),
+        Command("Create the merged /bin link", ("/usr/bin/ln", "-s", "usr/bin", f"{SYSROOT}/bin")),
+        Command("Provide the target /bin/sh", ("/usr/bin/ln", "-s", "bash", f"{SYSROOT}/usr/bin/sh")),
+        Command("Run the target shell in POSIX mode", (
+            *_target_program("/bin/sh"), "-c",
+            r'test -n "$BASH_VERSION" && test -o posix && printf "%s\n" "Klinix target shell OK"',
+        )),
+    )
+    ncurses = reviewed_build(book, "chapter06/ncurses", jobs)
+    return PackageBuild(book.pin, recipe.id, package, approval["adapter"], (archive,), source_root,
+                        commands, ("bin", "usr/bin/sh", "usr/bin/bash"), bootstrap=True,
+                        prerequisites=(ncurses,), root_symlinks=("bin",))

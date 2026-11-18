@@ -26,6 +26,22 @@
       "fhs_sha256": "643552db030e2f2d7ffde4f558e0f5f83d3fabf34a2e0e56ebdb49750ac27b0d",
       "fixes_sha256": "500567ff0a22e295bfe3b55e9b397796f71a19f01e1ff7fb29c9189482ee1809",
       "min_kernel": "5.10"
+    },
+    "chapter05/libstdc++": {
+      "adapter": "libstdcxx-pass1-v1",
+      "source_sha256": "e6738e29597f733270731aa90600f37ffdc045079dfc27ec7e8192cc81085c3e"
+    },
+    "chapter06/m4": {
+      "adapter": "m4-cross-v1",
+      "source_sha256": "f25c6ab51548a73a75558742fb031e0625d6485fe5f9155949d6486a2408ab66"
+    },
+    "chapter06/ncurses": {
+      "adapter": "ncurses-cross-v1",
+      "source_sha256": "355b4cbbed880b0381a04c46617b7656e362585d52e9cf84a67e2009b749ff11"
+    },
+    "chapter06/bash": {
+      "adapter": "bash-cross-v1",
+      "source_sha256": "0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba"
     }
   }
 }

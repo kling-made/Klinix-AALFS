@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shutil
 import tempfile
 from dataclasses import asdict
@@ -90,12 +91,21 @@ def run_build(build: PackageBuild, source_dir: Path, target_path: Path) -> dict:
             root.mkdir(parents=True)
             (work / "home").mkdir()
             input_dirs = tuple(workspace / f"inputs-{index}" for index in range(len(stages)))
+            verified = {}
             for stage, inputs in zip(stages, input_dirs):
                 inputs.mkdir()
                 for approved in stage.inputs:
                     filename = approved.filename
-                    stage_input(source_dir / filename, inputs / filename, approved)
-                    log.write(f"Verified {filename}\n".encode())
+                    destination = inputs / filename
+                    if filename in verified:
+                        original, copy = verified[filename]
+                        if approved.artifact != original.artifact or approved.sha256 != original.sha256:
+                            raise KlinixError(f"Conflicting approvals for source {filename}")
+                        os.link(copy, destination)
+                    else:
+                        stage_input(source_dir / filename, destination, approved)
+                        verified[filename] = approved, destination
+                        log.write(f"Verified {filename}\n".encode())
             for stage, inputs in zip(stages, input_dirs):
                 _run_stage(stage, sandbox, work, inputs, log)
                 shutil.rmtree(work / "source")

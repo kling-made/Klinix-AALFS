@@ -17,7 +17,7 @@ from klinix.sources import open_source, verify_file
 INPUT_LIMIT = 192 * 1024 * 1024
 UNPACK_LIMIT = 2 * 1024 * 1024 * 1024
 ARCHIVE_MEMBER_LIMIT = 200_000
-OUTPUT_ENTRY_LIMIT = 8_192
+OUTPUT_ENTRY_LIMIT = 16_384
 OUTPUT_LIMIT = 2 * 1024 * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024
 
@@ -150,8 +150,10 @@ def inventory(
         relative = path.relative_to(root).as_posix()
         metadata = path.lstat()
         mode = metadata.st_mode
-        if seen > OUTPUT_ENTRY_LIMIT or mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX):
-            raise KlinixError(f"Unsupported staged permissions or output size at {relative!r}")
+        if seen > OUTPUT_ENTRY_LIMIT:
+            raise KlinixError(f"Staged output exceeds the {OUTPUT_ENTRY_LIMIT:,}-entry limit at {relative!r}")
+        if mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX):
+            raise KlinixError(f"Unsupported staged permissions at {relative!r}")
         if stat.S_ISDIR(mode):
             pending.extend(path.iterdir())
             continue

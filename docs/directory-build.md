@@ -1,6 +1,6 @@
 # Reviewed directory build
 
-The Bzip2, Binutils pass 1, GCC pass 1, Linux API headers, and Glibc adapters implement reviewed sections of LFS 13.1 systemd. The exact book revision and reviewed SHA-256 digests are in `src/klinix/builder/approvals.json`. The catalog identifies the required packages and materials. The adapters supply the actual commands and never interpret imported command text.
+The Bzip2, Binutils pass 1, GCC pass 1, Linux API headers, Glibc, target libstdc++, M4, Ncurses, and Bash adapters implement reviewed sections of LFS 13.1 systemd. The exact book revision and reviewed SHA-256 digests are in `src/klinix/builder/approvals.json`. The catalog identifies the required packages and materials. The adapters supply the actual commands and never interpret imported command text.
 
 `klinix build-check` compiles and runs a small C program inside Bubblewrap. With `--bootstrap`, it checks the additional host programs and compiles and runs a small C++ program with the bootstrap mount layout. Package execution uses the same namespace and mount configuration with the verified inputs mounted read-only. A synthetic root exposes selected host toolchain paths, a minimal device tree, and a temporary filesystem. The build runs offline with a fixed environment, without access to the final target.
 
@@ -14,4 +14,6 @@ For the bootstrap passes, the private target is mounted at `/mnt/lfs`. Binutils 
 
 The standalone headers stage sanitizes the kernel's x86 user-space API headers and installs them in `usr/include/`. The Glibc stage first builds the cross-toolchain and those headers, then installs target startup files, libc, and the loader. Before publication Klinix uses the cross-compiler to build a small C program and verifies its header paths, startup files, ELF interpreter, and runtime library. The test runs through the staged loader with the staged library path inside Bubblewrap.
 
-Published targets contain a manifest at `var/lib/klinix/build-manifest.json`. The next bootstrap step is GCC's target libstdc++ build, followed by the temporary tools and target chroot.
+The libstdc++ stage builds against the staged Glibc and installs C++ headers where the cross-compiler searches. A C++ program checks the headers and loads the staged library at runtime. M4 records the staged Glibc's POSIX spawn support for later configure scripts. Ncurses builds a native `tic` to generate the database during cross-install, then checks the database with the target `infocmp`. Bash installs the relative `/bin/sh` link and verifies POSIX mode with the staged loader.
+
+Published targets contain a manifest at `var/lib/klinix/build-manifest.json`. The next stage is Coreutils, followed by the remaining Chapter 6 temporary tools and the target chroot.

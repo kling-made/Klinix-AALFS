@@ -259,6 +259,22 @@ def test_sysroot_inventory_allows_only_reviewed_root_entries(tmp_path):
         inventory(root, (), **layout)
 
 
+def test_inventory_keeps_entry_and_permission_checks_independent(tmp_path, monkeypatch):
+    from klinix.builder import files
+
+    root = tmp_path / "root"
+    (root / "usr").mkdir(parents=True)
+    file = root / "usr/file"
+    file.write_text("data")
+    with monkeypatch.context() as patch:
+        patch.setattr(files, "OUTPUT_ENTRY_LIMIT", 1)
+        with pytest.raises(KlinixError, match="exceeds the 1-entry limit"):
+            inventory(root, ())
+    file.chmod(0o4755)
+    with pytest.raises(KlinixError, match="Unsupported staged permissions.*usr/file"):
+        inventory(root, ())
+
+
 @pytest.fixture
 def pinned_book():
     location = os.environ.get("KLINIX_TEST_LFS_SOURCE")
@@ -303,6 +319,63 @@ def test_glibc_plan_schedules_transitive_prerequisites_and_patches(pinned_book, 
         "glibc-2.44.tar.xz", "glibc-fhs-1.patch", "glibc-2.44-upstream_fixes-1.patch",
     }
     assert not list(tmp_path.glob("klinix-build-*.log"))
+
+
+def test_shell_preview_includes_lfs_temporary_tools_in_order(pinned_book, tmp_path, capsys):
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    build = reviewed_build(pinned_book, "chapter06/bash", 2)
+    assert [stage.recipe for stage in build_order(build)] == [
+        "chapter05/binutils-pass1", "chapter05/gcc-pass1", "chapter05/linux-headers", "chapter05/glibc",
+        "chapter05/libstdc++", "chapter06/m4", "chapter06/ncurses", "chapter06/bash",
+    ]
+    assert main([
+        "--db", str(db), "build-package", build.recipe, "--revision", APPROVED_REVISION, "--dry-run",
+    ]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["mode"] == "dry-run"
+    assert preview["prerequisites"][0]["recipe"] == "chapter06/ncurses"
+    assert preview["inputs"][0]["filename"] == "bash-5.3.tar.gz"
+    assert not list(tmp_path.glob("klinix-build-*.log"))
+
+
+def test_libstdcxx_uses_the_same_verified_gcc_archive(pinned_book, tmp_path, monkeypatch):
+    from klinix import builder
+
+    class ProbeOnly:
+        def __init__(self, *, bootstrap):
+            assert bootstrap
+
+        def probe(self):
+            pass
+
+    build = reviewed_build(pinned_book, "chapter05/libstdc++", 2)
+    staged_names = []
+    gcc_inodes = []
+
+    def stage_input(source, destination, approved):
+        staged_names.append(source.name)
+        destination.write_text(approved.sha256)
+
+    def inspect_inputs(stage, _sandbox, work, inputs, _log):
+        (work / "source").mkdir()
+        if stage.recipe in {"chapter05/gcc-pass1", "chapter05/libstdc++"}:
+            name = stage.inputs[0].filename
+            gcc_inodes.append((inputs / name).stat().st_ino)
+            assert (inputs / name).read_text() == stage.inputs[0].sha256
+        if stage.recipe == build.recipe:
+            raise KlinixError("test reached libstdc++")
+
+    monkeypatch.setattr(builder, "Bubblewrap", ProbeOnly)
+    monkeypatch.setattr(builder, "stage_input", stage_input)
+    monkeypatch.setattr(builder, "_run_stage", inspect_inputs)
+    target = tmp_path / "target"
+    with pytest.raises(KlinixError, match=r"test reached libstdc\+\+"):
+        run_build(build, tmp_path, target)
+    assert staged_names.count(build.inputs[0].filename) == 1
+    assert len(gcc_inodes) == 2
+    assert gcc_inodes[0] == gcc_inodes[1]
+    assert not target.exists()
 
 
 def test_bootstrap_preverifies_later_materials(pinned_book, tmp_path, monkeypatch):
@@ -385,3 +458,25 @@ def test_real_cross_glibc(pinned_book, tmp_path, capsys):
     assert "Requesting program interpreter: /lib64/ld-linux-x86-64.so.2" in log
     assert "libc.so.6 => /mnt/lfs/usr/lib/libc.so.6" in log
     assert "Klinix sysroot OK" in log.splitlines()
+
+
+def test_real_temporary_shell(pinned_book, tmp_path, capsys):
+    location = os.environ.get("KLINIX_TEST_SHELL_SOURCES")
+    if not location:
+        pytest.skip("official temporary shell materials and rootless Bubblewrap required")
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    target = tmp_path / "sysroot"
+    assert main([
+        "--db", str(db), "build-package", "chapter06/bash", "--revision", APPROVED_REVISION,
+        "--sources", location, "--target", str(target), "--jobs", "2",
+    ]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert (target / "bin/sh").resolve() == (target / "usr/bin/bash").resolve()
+    assert (target / "usr/lib/libstdc++.so.6").is_file()
+    assert (target / "usr/bin/m4").is_file()
+    assert (target / "tools/bin/tic").is_file()
+    assert (target / "usr/bin/infocmp").is_file()
+    log = Path(output["log"]).read_text()
+    assert "libstdc++.so.6 => /mnt/lfs/usr/lib/libstdc++.so.6" in log
+    assert {"Klinix C++ runtime OK", "Klinix M4 OK", "Klinix target shell OK"}.issubset(log.splitlines())
