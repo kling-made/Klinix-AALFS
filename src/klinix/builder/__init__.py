@@ -35,12 +35,13 @@ def build_order(build: PackageBuild) -> tuple[PackageBuild, ...]:
 
 
 def preview(build: PackageBuild) -> dict:
+    native_build = any(command.target_writable for command in build.commands)
     output = {
         "book": asdict(build.pin),
         "recipe": build.recipe,
         "package": asdict(build.package),
         "adapter": build.adapter,
-        "environment": ENVIRONMENT,
+        "environment": "isolated-target-toolchain" if native_build else ENVIRONMENT,
         "inputs": [
             {"filename": item.filename, "url": item.artifact.url, "sha256": item.sha256}
             for item in build.inputs
@@ -68,7 +69,10 @@ def _run_stage(build: PackageBuild, sandbox: Bubblewrap, work: Path, inputs: Pat
     for command in build.commands:
         LOGGER.info("%s", command.label)
         if command.target_root:
-            sandbox.run_in_target(work / "root", command.argv, log, timeout=command.timeout)
+            sandbox.run_in_target(
+                work / "root", command.argv, log, timeout=command.timeout,
+                source=source if command.target_writable else None,
+            )
             continue
         cwd = (Path("/work/source") / build.source_root / command.cwd).as_posix()
         sandbox.run(work, cwd, inputs, command.argv, log, timeout=command.timeout, bootstrap=build.bootstrap)
@@ -140,4 +144,4 @@ def run_build(build: PackageBuild, source_dir: Path, target_path: Path) -> dict:
         raise KeyboardInterrupt(detail) from exc
     return {"target": str(target), "manifest": str(target / MANIFEST),
             "log": str(log_path), "files": len(records), "book": asdict(build.pin),
-            "recipe": build.recipe, "environment": ENVIRONMENT}
+            "recipe": build.recipe, "environment": manifest["environment"]}

@@ -390,35 +390,123 @@ def test_gcc_pass2_plans_a_separate_native_verification(pinned_book, tmp_path, c
     assert not list(tmp_path.glob("klinix-build-*.log"))
 
 
-def test_target_verification_exposes_only_the_staged_root(tmp_path, monkeypatch):
+def test_chapter7_preview_uses_target_toolchain_after_native_gcc(pinned_book, tmp_path, capsys):
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    build = reviewed_build(pinned_book, "chapter07/bison", 2)
+    stages = build_order(build)
+    assert [stage.recipe for stage in stages[-3:]] == [
+        "chapter06/gcc-pass2", "chapter07/gettext", "chapter07/bison",
+    ]
+    assert main([
+        "--db", str(db), "build-package", build.recipe, "--revision", APPROVED_REVISION, "--dry-run",
+    ]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["mode"] == "dry-run"
+    gettext, = preview["prerequisites"]
+    assert gettext["inputs"][0]["filename"] == "gettext-1.0.tar.xz"
+    assert preview["inputs"][0]["filename"] == "bison-3.8.2.tar.xz"
+    for stage in (gettext, preview):
+        assert stage["environment"] == "isolated-target-toolchain"
+        *build_commands, check = stage["commands"]
+        assert all(command["target_root"] and command["target_writable"]
+                   and command["cwd"] == "/tmp/source" for command in build_commands)
+        assert check["target_root"] and not check["target_writable"] and check["cwd"] == "/tmp"
+    assert not list(tmp_path.glob("klinix-build-*.log"))
+
+
+@pytest.mark.parametrize("writable", [False, True])
+def test_target_sandbox_exposes_only_reviewed_paths(tmp_path, monkeypatch, writable):
     root = tmp_path / "root"
     (root / "tmp").mkdir(parents=True)
     (root / "dev").mkdir()
+    source = None
+    if writable:
+        source = tmp_path / "source"
+        source.mkdir()
     sandbox = Bubblewrap.__new__(Bubblewrap)
     sandbox._executable = "/usr/bin/bwrap"
     argv = ("/usr/bin/cc", "--version")
     log = io.BytesIO()
 
     def capture(args, command, output, *, timeout):
-        i = args.index("--ro-bind")
-        assert args[i:i + 3] == ["--ro-bind", str(root), "/"]
-        assert args.count("--ro-bind") == 1 and "--bind" not in args
+        mounts = [(flag, *args[i + 1:i + 3]) for i, flag in enumerate(args) if flag in {"--bind", "--ro-bind"}]
+        if writable:
+            assert mounts == [("--bind", str(root), "/"), ("--bind", str(source), "/tmp/source")]
+            assert args.index("--tmpfs") < args.index("/tmp/source")
+        else:
+            assert mounts == [("--ro-bind", str(root), "/")]
         assert args[args.index("--dev") + 1] == "/dev"
         assert args[args.index("--tmpfs") + 1] == "/tmp"
-        assert args[args.index("--chdir") + 1] == "/tmp"
+        assert args[args.index("--chdir") + 1] == ("/tmp/source" if writable else "/tmp")
         assert "/usr/bin:/usr/sbin" in args
         assert "--unshare-all" in args and "--clearenv" in args
         assert command == argv and output is log and timeout == 10
         return subprocess.CompletedProcess(args, 0)
 
     monkeypatch.setattr(sandbox, "_execute", capture)
-    sandbox.run_in_target(root, argv, log, timeout=10)
+    sandbox.run_in_target(root, argv, log, timeout=10, source=source)
     assert log.getvalue() == b"$ /usr/bin/cc --version\n"
 
-    (root / "tmp").rmdir()
-    (root / "tmp").symlink_to(tmp_path, target_is_directory=True)
-    with pytest.raises(KlinixError, match="Target verification requires a real directory"):
-        sandbox.run_in_target(root, argv, log, timeout=10)
+    replaced = source if writable else root / "tmp"
+    replaced.rmdir()
+    replaced.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(KlinixError, match="Target sandbox requires a real directory"):
+        sandbox.run_in_target(root, argv, log, timeout=10, source=source)
+
+
+@pytest.mark.skipif(os.environ.get("KLINIX_TEST_TARGET_SANDBOX") != "1", reason="rootless Bubblewrap required")
+def test_real_target_sandbox_with_small_fixture(tmp_path):
+    root = tmp_path / "root"
+    for name in ("dev", "tmp", "usr/bin"):
+        (root / name).mkdir(parents=True)
+    source = tmp_path / "source"
+    source.mkdir()
+    probe = tmp_path / "probe.c"
+    probe.write_text("""
+#include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <string.h>
+#include <unistd.h>
+
+static void touch(const char *path) {
+    int fd = open(path, O_WRONLY | O_CREAT, 0600);
+    assert(fd >= 0);
+    assert(close(fd) == 0);
+}
+
+int main(int argc, char **argv) {
+    char cwd[32];
+    assert(getcwd(cwd, sizeof cwd));
+    assert(access("/work", F_OK) == -1);
+    assert(access("/inputs", F_OK) == -1);
+    assert(access("/dev/null", W_OK) == 0);
+    if (argc == 2 && strcmp(argv[1], "build") == 0) {
+        assert(strcmp(cwd, "/tmp/source") == 0);
+        touch("source-output");
+        touch("/usr/staged-output");
+        touch("/tmp/scratch");
+    } else {
+        assert(strcmp(cwd, "/tmp") == 0);
+        assert(access("/tmp/source", F_OK) == -1);
+        assert(access("/tmp/scratch", F_OK) == -1);
+        assert(access("/usr/staged-output", F_OK) == 0);
+        assert(open("/usr/staged-output", O_WRONLY) == -1 && errno == EROFS);
+        touch("/tmp/check");
+    }
+}
+""", encoding="ascii")
+    subprocess.run(["/usr/bin/gcc", "-static", str(probe), "-o", str(root / "usr/bin/probe")],
+                   check=True, timeout=15)
+    sandbox = Bubblewrap()
+    with (tmp_path / "sandbox.log").open("wb") as log:
+        sandbox.run_in_target(root, ("/usr/bin/probe", "build"), log, timeout=15, source=source)
+        sandbox.run_in_target(root, ("/usr/bin/probe",), log, timeout=15)
+    assert (source / "source-output").is_file()
+    assert (root / "usr/staged-output").is_file()
+    assert not list((root / "tmp").iterdir())
+    assert not list((root / "dev").iterdir())
 
 
 def test_libstdcxx_uses_the_same_verified_gcc_archive(pinned_book, tmp_path, monkeypatch):

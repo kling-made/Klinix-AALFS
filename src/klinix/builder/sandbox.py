@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import BinaryIO
 
-from klinix.builder.recipes import BOOTSTRAP_HOST_TOOLS, SYSROOT, TOOLS
+from klinix.builder.recipes import BOOTSTRAP_HOST_TOOLS, SYSROOT, TARGET_SOURCE, TOOLS
 from klinix.errors import KlinixError
 
 LOGGER = logging.getLogger(__name__)
@@ -96,18 +96,25 @@ class Bubblewrap:
         self._run_logged(self._args(work, cwd, inputs, bootstrap=bootstrap), argv, log, timeout=timeout)
 
     def run_in_target(
-        self, root: Path, argv: Sequence[str], log: BinaryIO, *, timeout: int,
+        self, root: Path, argv: Sequence[str], log: BinaryIO, *, timeout: int, source: Path | None = None,
     ) -> None:
-        """Run a verification command with the staged root mounted at /."""
-        for directory in (root, root / "dev", root / "tmp"):
+        """Run in the staged root. A reviewed build can mount its extracted source and write to the root."""
+        directories = (root, root / "dev", root / "tmp")
+        if source is not None:
+            directories += (source,)
+        for directory in directories:
             if not stat.S_ISDIR(directory.lstat().st_mode):
-                raise KlinixError(f"Target verification requires a real directory at {directory}")
+                raise KlinixError(f"Target sandbox requires a real directory at {directory}")
         args = self._isolation_args(path="/usr/bin:/usr/sbin", home="/tmp")
         args.extend((
-            "--ro-bind", str(root), "/",
+            "--ro-bind" if source is None else "--bind", str(root), "/",
             "--dev", "/dev", "--size", "67108864", "--tmpfs", "/tmp",
-            "--chdir", "/tmp", "--",
         ))
+        cwd = "/tmp"
+        if source is not None:
+            cwd = TARGET_SOURCE
+            args.extend(("--bind", str(source), cwd))
+        args.extend(("--chdir", cwd, "--"))
         self._run_logged(args, argv, log, timeout=timeout)
 
     def _run_logged(

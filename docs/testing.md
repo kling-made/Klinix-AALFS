@@ -1,5 +1,9 @@
 # Testing strategy
 
+The default pytest suite exercises Klinix operations with small fixtures and requires no compiled sysroot. Package builds and system boot checks are separate opt-in integrations.
+
+To exercise the real writable and read-only target mounts with a small fixture, run `KLINIX_TEST_TARGET_SANDBOX=1 python -m pytest -k test_real_target_sandbox_with_small_fixture` in an unprivileged Bubblewrap-capable shell. The test compiles one static C program using the host GCC and libc development files. It needs no LFS archives.
+
 1. Run the local pytest suite on supported Python versions. Temporary Git books and SQLite databases cover command-line behavior, book traversal and edition filtering, configuration, stored metadata, ordering, malformed input, rollback, invalid dependencies, and cycles.
 2. Test integration against a separately checked-out official LFS tag. Set `KLINIX_TEST_LFS_SOURCE` and `KLINIX_TEST_LFS_REVISION` for the real-book integration test. Check paths, artifacts, package recipes, and phase order against the book.
 3. To exercise reviewed execution, set `KLINIX_TEST_BUILD_SOURCES` to the local LFS 13.1 Bzip2 archive and patch directory along with `KLINIX_TEST_LFS_SOURCE` and `KLINIX_TEST_LFS_REVISION` for LFS 13.1. Run `python -m pytest` in an unprivileged Bubblewrap-capable shell. Build tests verify the staged package, manifest, checksum failures, read-only inputs, and repeat-build target protection.

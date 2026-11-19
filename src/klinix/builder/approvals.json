@@ -101,6 +101,14 @@
       "gmp_sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
       "mpfr_sha256": "b67ba0383ef7e8a8563734e2e889ef5ec3c3b898a01d00fa0a6869ad81c6ce01",
       "mpc_sha256": "91204cd32f164bd3b7c992d4a6a8ce6519511aadab30f78b6982d0bf8d73e931"
+    },
+    "chapter07/gettext": {
+      "adapter": "gettext-temporary-v1",
+      "source_sha256": "71132a3fb71e68245b8f2ac4e9e97137d3e5c02f415636eb508ae607bc01add7"
+    },
+    "chapter07/bison": {
+      "adapter": "bison-temporary-v1",
+      "source_sha256": "9bba0214ccf7f1079c5d59210045227bcf619519840ebfa80cd3849cff5a5bf2"
     }
   }
 }

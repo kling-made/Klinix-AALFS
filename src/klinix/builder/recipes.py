@@ -12,13 +12,14 @@ from klinix.sources import artifact_filename
 TARGET_TRIPLET = "x86_64-lfs-linux-gnu"
 SYSROOT = "/mnt/lfs"
 TOOLS = f"{SYSROOT}/tools"
+TARGET_SOURCE = "/tmp/source"
 TARGET_LOADER = "/lib64/ld-linux-x86-64.so.2"
 TARGET_COMPILER = f"{TOOLS}/bin/{TARGET_TRIPLET}-gcc"
 CONFIG_SITE = f"{SYSROOT}/usr/share/config.site"
 BOOTSTRAP_HOST_TOOLS = (
     "bash", "bison", "diff", "find", "flex", "g++", "gawk", "grep", "m4", "makeinfo", "perl", "python3", "readlink",
 )
-VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)+")
+VERSION = re.compile(r"[0-9]+(?:\.[0-9]+)*")
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class Command:
     cwd: str = "."
     timeout: int = 180
     target_root: bool = False
+    target_writable: bool = False
 
 
 @dataclass(frozen=True)
@@ -79,6 +81,10 @@ def reviewed_build(book: Book, recipe_id: str, jobs: int) -> PackageBuild:
         from klinix.builder.temporary import reviewed_temporary
 
         factory = reviewed_temporary
+    if adapter in {"gettext-temporary-v1", "bison-temporary-v1"}:
+        from klinix.builder.native import reviewed_native
+
+        factory = reviewed_native
     if (book.pin.family, book.pin.edition) != ("lfs", "systemd") or factory is None:
         raise KlinixError(f"No reviewed build adapter for {recipe_id!r} at {book.pin.revision}")
     recipe = next((entry for entry in book.recipes if entry.id == recipe_id), None)

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0
+
+- Added reviewed builds for LFS 13.1 Chapter 7's temporary Gettext 1.0 and Bison 3.8.2.
+- Build those packages with the staged native toolchain in a writable Bubblewrap target. Verify a translation catalog and a generated parser in a separate read-only target session.
+
 ## 0.7.0
 
 - Added the pinned LFS 13.1 GCC pass 2 build, native `cc`, and the target C and C++ compiler and runtime libraries.
