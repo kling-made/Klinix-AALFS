@@ -81,10 +81,11 @@ def reviewed_build(book: Book, recipe_id: str, jobs: int) -> PackageBuild:
         from klinix.builder.temporary import reviewed_temporary
 
         factory = reviewed_temporary
-    if adapter in {"gettext-temporary-v1", "bison-temporary-v1"}:
-        from klinix.builder.native import reviewed_native
+    if isinstance(adapter, str) and adapter.endswith("-temporary-v1"):
+        from klinix.builder.native import NATIVE_TOOLS, reviewed_native
 
-        factory = reviewed_native
+        if adapter in NATIVE_TOOLS:
+            factory = reviewed_native
     if (book.pin.family, book.pin.edition) != ("lfs", "systemd") or factory is None:
         raise KlinixError(f"No reviewed build adapter for {recipe_id!r} at {book.pin.revision}")
     recipe = next((entry for entry in book.recipes if entry.id == recipe_id), None)

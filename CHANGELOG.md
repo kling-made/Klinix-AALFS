@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+- Added reviewed builds for LFS 13.1 Chapter 7's temporary Perl, Zlib, Mpdecimal, and Python.
+- Verify Perl's native SHA-256 module, round-trip compression with shared Zlib, decimal arithmetic with shared Mpdecimal, and Python's use of both shared libraries.
+- Increased the bounded bootstrap inventory to accommodate the two interpreters and their standard libraries.
+
 ## 0.8.0
 
 - Added reviewed builds for LFS 13.1 Chapter 7's temporary Gettext 1.0 and Bison 3.8.2.

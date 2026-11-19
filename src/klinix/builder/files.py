@@ -18,6 +18,7 @@ INPUT_LIMIT = 192 * 1024 * 1024
 UNPACK_LIMIT = 2 * 1024 * 1024 * 1024
 ARCHIVE_MEMBER_LIMIT = 200_000
 OUTPUT_ENTRY_LIMIT = 16_384
+BOOTSTRAP_OUTPUT_ENTRY_LIMIT = 32_768
 OUTPUT_LIMIT = 2 * 1024 * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024
 
@@ -142,6 +143,7 @@ def inventory(
     pending = entries
     seen = 0
     total_size = 0
+    entry_limit = BOOTSTRAP_OUTPUT_ENTRY_LIMIT if bootstrap else OUTPUT_ENTRY_LIMIT
     records = {}
     links: dict[tuple[int, int], tuple[int, list[str]]] = {}
     while pending:
@@ -150,8 +152,8 @@ def inventory(
         relative = path.relative_to(root).as_posix()
         metadata = path.lstat()
         mode = metadata.st_mode
-        if seen > OUTPUT_ENTRY_LIMIT:
-            raise KlinixError(f"Staged output exceeds the {OUTPUT_ENTRY_LIMIT:,}-entry limit at {relative!r}")
+        if seen > entry_limit:
+            raise KlinixError(f"Staged output exceeds the {entry_limit:,}-entry limit at {relative!r}")
         if mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX):
             raise KlinixError(f"Unsupported staged permissions at {relative!r}")
         if stat.S_ISDIR(mode):

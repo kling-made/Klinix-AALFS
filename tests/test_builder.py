@@ -260,7 +260,8 @@ def test_sysroot_inventory_allows_only_reviewed_root_entries(tmp_path):
         inventory(root, (), **layout)
 
 
-def test_inventory_keeps_entry_and_permission_checks_independent(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("bootstrap", "limit"), [(False, "OUTPUT_ENTRY_LIMIT"), (True, "BOOTSTRAP_OUTPUT_ENTRY_LIMIT")])
+def test_inventory_keeps_entry_and_permission_checks_independent(tmp_path, monkeypatch, bootstrap, limit):
     from klinix.builder import files
 
     root = tmp_path / "root"
@@ -268,12 +269,12 @@ def test_inventory_keeps_entry_and_permission_checks_independent(tmp_path, monke
     file = root / "usr/file"
     file.write_text("data")
     with monkeypatch.context() as patch:
-        patch.setattr(files, "OUTPUT_ENTRY_LIMIT", 1)
+        patch.setattr(files, limit, 1)
         with pytest.raises(KlinixError, match="exceeds the 1-entry limit"):
-            inventory(root, ())
+            inventory(root, (), bootstrap=bootstrap, directories=("usr",))
     file.chmod(0o4755)
     with pytest.raises(KlinixError, match="Unsupported staged permissions.*usr/file"):
-        inventory(root, ())
+        inventory(root, (), bootstrap=bootstrap, directories=("usr",))
 
 
 @pytest.fixture
@@ -393,25 +394,33 @@ def test_gcc_pass2_plans_a_separate_native_verification(pinned_book, tmp_path, c
 def test_chapter7_preview_uses_target_toolchain_after_native_gcc(pinned_book, tmp_path, capsys):
     db = tmp_path / "catalog.sqlite3"
     Catalog(db).add(pinned_book)
-    build = reviewed_build(pinned_book, "chapter07/bison", 2)
+    build = reviewed_build(pinned_book, "chapter07/python", 2)
     stages = build_order(build)
-    assert [stage.recipe for stage in stages[-3:]] == [
-        "chapter06/gcc-pass2", "chapter07/gettext", "chapter07/bison",
-    ]
+    chapter7 = {
+        "chapter07/gettext": "gettext-1.0.tar.xz",
+        "chapter07/bison": "bison-3.8.2.tar.xz",
+        "chapter07/perl": "perl-5.44.0.tar.xz",
+        "chapter07/zlib": "zlib-1.3.2.tar.gz",
+        "chapter07/mpdecimal": "mpdecimal-4.0.1.tar.gz",
+        "chapter07/python": "Python-3.14.7.tar.xz",
+    }
+    assert [stage.recipe for stage in stages[-7:]] == ["chapter06/gcc-pass2", *chapter7]
     assert main([
         "--db", str(db), "build-package", build.recipe, "--revision", APPROVED_REVISION, "--dry-run",
     ]) == 0
     preview = json.loads(capsys.readouterr().out)
     assert preview["mode"] == "dry-run"
-    gettext, = preview["prerequisites"]
-    assert gettext["inputs"][0]["filename"] == "gettext-1.0.tar.xz"
-    assert preview["inputs"][0]["filename"] == "bison-3.8.2.tar.xz"
-    for stage in (gettext, preview):
+    stage = preview
+    for recipe, archive in reversed(chapter7.items()):
+        assert stage["recipe"] == recipe
+        assert stage["inputs"][0]["filename"] == archive
         assert stage["environment"] == "isolated-target-toolchain"
         *build_commands, check = stage["commands"]
         assert all(command["target_root"] and command["target_writable"]
                    and command["cwd"] == "/tmp/source" for command in build_commands)
         assert check["target_root"] and not check["target_writable"] and check["cwd"] == "/tmp"
+        stage, = stage["prerequisites"]
+    assert stage["recipe"] == "chapter06/gcc-pass2"
     assert not list(tmp_path.glob("klinix-build-*.log"))
 
 

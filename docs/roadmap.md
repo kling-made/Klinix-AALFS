@@ -5,7 +5,7 @@
 | 1. Foundation | Python package, CLI, logging, configuration, documentation, and automated tests |
 | 2. LFS import | Official LFS Git discovery, pinned local DocBook import, systemd filtering, material metadata, and offline checksum verification. Verified against LFS 12.4, 13.1, and a development revision. |
 | 3. Catalog and planner | Transactional SQLite catalog, typed dependency graph, and dry-run plans. Installed package and build state remain pending. |
-| 4. Build engine | Implemented host preflight, isolated Bzip2 staging, and the LFS 13.1 cross-toolchain and Chapter 6 temporary tools through GCC pass 2. Chapter 7 builds temporary Gettext and Bison in a writable target sandbox and verifies them in a read-only session. The remaining Chapter 7 tools and broader target filesystem setup are pending. |
+| 4. Build engine | Implemented host preflight, isolated Bzip2 staging, and the LFS 13.1 cross-toolchain and Chapter 6 temporary tools through GCC pass 2. Chapter 7 builds through temporary Python in a writable target sandbox and verifies each package in a read-only session. Texinfo, Util-linux, and broader target filesystem setup are pending. |
 | 5. Recovery and installation | Single-package build logs and manifests are available. Add checkpoints, installed inventory, ownership checks, safe removal, and upgrade/recovery semantics. |
 | 6. Disk and boot | Add explicit privileged operations, disk image layouts, mounts, fstab, and bootloader handling |
 | 7. Graphical Builder | Add Qt configuration, selections, live plan execution, and recovery views backed by headless APIs |

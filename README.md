@@ -2,7 +2,7 @@
 
 Klinix is an independent Advanced Automated Linux From Scratch builder and source package manager for x86-64 Linux and systemd.
 
-The headless CLI discovers official LFS releases, imports a pinned systemd Git book into SQLite, and generates a dry-run plan with source and patch checksums, bootstrap stages, and reference commands. It builds a new LFS 13.1 sysroot through the Chapter 6 temporary tools, verifies the native C and C++ compilers, and builds Chapter 7's temporary Gettext and Bison in the staged root. It can also stage Bzip2 in a separate directory. The graphical builder, complete base system, and installed package manager are future milestones.
+The headless CLI discovers official LFS releases, imports a pinned systemd Git book into SQLite, and generates a dry-run plan with source and patch checksums, bootstrap stages, and reference commands. It builds a new LFS 13.1 sysroot through Chapter 7's temporary Python and verifies the native compilers and temporary tools in the staged root. It can also stage Bzip2 in a separate directory. The graphical builder, complete base system, and installed package manager are future milestones.
 
 ## Install
 
@@ -41,12 +41,12 @@ Use the LFS 13.1 revision imported above. `build-check --bootstrap` checks the u
 
 ```sh
 klinix build-check --bootstrap
-klinix --db ./catalog.sqlite3 build-package chapter07/bison --revision "$revision" --dry-run
-klinix -v --db ./catalog.sqlite3 build-package chapter07/bison --revision "$revision" \
+klinix --db ./catalog.sqlite3 build-package chapter07/python --revision "$revision" --dry-run
+klinix -v --db ./catalog.sqlite3 build-package chapter07/python --revision "$revision" \
   --sources ./materials --target ./lfs-sysroot --jobs 2
 ```
 
-Use the filenames and URLs in the preview's `inputs` and nested `prerequisites` to populate `materials`. The combined root contains the cross tools under `tools/`, the target-native compilers and temporary tools under `usr/`, and a manifest under `var/lib/klinix/`. Use an earlier recipe ID such as `chapter05/glibc`, `chapter06/gcc-pass2`, or `chapter07/gettext` to stop after that stage. [Directory build details](docs/directory-build.md)
+Use the filenames and URLs in the preview's `inputs` and nested `prerequisites` to populate `materials`. The combined root contains the cross tools under `tools/`, the target-native compilers and temporary tools under `usr/`, and a manifest under `var/lib/klinix/`. Use an earlier recipe ID such as `chapter05/glibc`, `chapter06/gcc-pass2`, or `chapter07/bison` to stop after that stage. [Directory build details](docs/directory-build.md)
 
 ## Build the reviewed Bzip2 package
 

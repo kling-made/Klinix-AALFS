@@ -109,6 +109,22 @@
     "chapter07/bison": {
       "adapter": "bison-temporary-v1",
       "source_sha256": "9bba0214ccf7f1079c5d59210045227bcf619519840ebfa80cd3849cff5a5bf2"
+    },
+    "chapter07/perl": {
+      "adapter": "perl-temporary-v1",
+      "source_sha256": "505cf43912e9480495c344c70260452e32aa2a73c546a026b3f100053b23ce91"
+    },
+    "chapter07/zlib": {
+      "adapter": "zlib-temporary-v1",
+      "source_sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
+    },
+    "chapter07/mpdecimal": {
+      "adapter": "mpdecimal-temporary-v1",
+      "source_sha256": "96d33abb4bb0070c7be0fed4246cd38416188325f820468214471938545b1ac8"
+    },
+    "chapter07/python": {
+      "adapter": "python-temporary-v1",
+      "source_sha256": "3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81"
     }
   }
 }

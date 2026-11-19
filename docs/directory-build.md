@@ -1,6 +1,6 @@
 # Reviewed directory build
 
-The reviewed LFS 13.1 systemd build covers the cross-toolchain, Linux API headers, Glibc, target libstdc++, all Chapter 6 temporary tools, and Chapter 7's temporary Gettext and Bison. Bzip2 has its own staging adapter. The exact book revision and reviewed SHA-256 digests are in `src/klinix/builder/approvals.json`. The catalog identifies the required packages and materials. The adapters supply the actual commands and never interpret imported command text.
+The reviewed LFS 13.1 systemd build covers the cross-toolchain, Linux API headers, Glibc, target libstdc++, all Chapter 6 temporary tools, and Chapter 7's temporary tools through Python. Bzip2 has its own staging adapter. The exact book revision and reviewed SHA-256 digests are in `src/klinix/builder/approvals.json`. The catalog identifies the required packages and materials. The adapters supply the actual commands and never interpret imported command text.
 
 `klinix build-check` compiles and runs a small C program inside Bubblewrap. With `--bootstrap`, it checks the additional host programs and compiles and runs a small C++ program with the bootstrap mount layout. Package execution uses the same namespace and mount configuration with the verified inputs mounted read-only. A synthetic root exposes selected host toolchain paths, a minimal device tree, and a temporary filesystem. The build runs offline with a fixed environment, without access to the final target.
 
@@ -22,6 +22,8 @@ GCC pass 2 uses the pass 1 compiler to build the native C and C++ front ends and
 
 The GCC probe mounts the staged sysroot read-only as `/` in a new Bubblewrap namespace. It supplies a minimal private `/dev`, a disposable `/tmp`, and the target `/usr/bin:/usr/sbin` search path. The native compiler builds and links a C program and a C++ program using threads and exceptions, then runs both through the target's kernel-selected loader.
 
-The Gettext and Bison builds mount the private staged sysroot writable at `/` and the current package's extracted source at `/tmp/source`. The host toolchain and host files stay outside this namespace. Gettext installs `msgfmt`, `msgmerge`, and `xgettext`, and their probe extracts, merges, and compiles a translation catalog. Bison installs its parser generator and skeletons, then generates, compiles, and runs a sample parser. Both probes use a read-only target and disposable scratch space. The remaining Chapter 7 packages and broader target filesystem setup are pending.
+Chapter 7 builds mount the private staged sysroot writable at `/` and the current package's extracted source at `/tmp/source`. The host toolchain and host files stay outside this namespace. Gettext installs `msgfmt`, `msgmerge`, and `xgettext`, and their probe extracts, merges, and compiles a translation catalog. Bison installs its parser generator and skeletons, then generates, compiles, and runs a sample parser.
+
+Perl installs a shared runtime and checks its native `Digest::SHA` module. C probes link the staged Zlib and Mpdecimal libraries and test compression and decimal arithmetic. Python builds a shared interpreter without bundled pip, exercises its `zlib` and `_decimal` extensions, and checks their ELF dependencies for the staged libraries. All probes use a read-only target and disposable scratch space. Texinfo, Util-linux, and broader target filesystem setup are pending.
 
 Published targets contain a manifest at `var/lib/klinix/build-manifest.json`.
