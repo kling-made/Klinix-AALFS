@@ -1,6 +1,6 @@
 # Reviewed directory build
 
-The reviewed LFS 13.1 systemd build covers the cross-toolchain, Linux API headers, Glibc, target libstdc++, and the temporary tools through Binutils pass 2. Bzip2 has its own staging adapter. The exact book revision and reviewed SHA-256 digests are in `src/klinix/builder/approvals.json`. The catalog identifies the required packages and materials. The adapters supply the actual commands and never interpret imported command text.
+The reviewed LFS 13.1 systemd build covers the cross-toolchain, Linux API headers, Glibc, target libstdc++, and the temporary tools through GCC pass 2. Bzip2 has its own staging adapter. The exact book revision and reviewed SHA-256 digests are in `src/klinix/builder/approvals.json`. The catalog identifies the required packages and materials. The adapters supply the actual commands and never interpret imported command text.
 
 `klinix build-check` compiles and runs a small C program inside Bubblewrap. With `--bootstrap`, it checks the additional host programs and compiles and runs a small C++ program with the bootstrap mount layout. Package execution uses the same namespace and mount configuration with the verified inputs mounted read-only. A synthetic root exposes selected host toolchain paths, a minimal device tree, and a temporary filesystem. The build runs offline with a fixed environment, without access to the final target.
 
@@ -18,4 +18,6 @@ The libstdc++ stage builds against the staged Glibc and installs C++ headers whe
 
 The build continues through Coreutils, Diffutils, File, Findutils, Gawk, Grep, Gzip, Make, Patch, Sed, Tar, and Xz. Coreutils installs `chroot` under `/usr/sbin` and adds the merged `/sbin` link. File uses a matching build-host binary to generate the target magic database. Each tool runs a probe with the staged loader. The second Binutils pass installs the target-native assembler and linker under `usr/` and verifies them by assembling and linking a small x86-64 ELF.
 
-Published targets contain a manifest at `var/lib/klinix/build-manifest.json`. GCC pass 2 and the target chroot are pending.
+GCC pass 2 uses the pass 1 compiler to build the native C and C++ front ends and their runtimes. It stages `cc` as a relative link to `gcc`. The adapter retains `-O2` and omits debug information and precompiled C++ headers from the temporary toolchain to reduce workspace use.
+
+The final probe mounts the staged sysroot read-only as `/` in a new Bubblewrap namespace. It supplies a minimal private `/dev`, a disposable `/tmp`, and the target `/usr/bin:/usr/sbin` search path. The native compiler builds and links a C program and a C++ program using threads and exceptions, then runs both through the target's kernel-selected loader. Published targets contain a manifest at `var/lib/klinix/build-manifest.json`. The writable Chapter 7 build environment and temporary tool builds are pending.

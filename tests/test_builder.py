@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import tarfile
 from pathlib import Path
 
@@ -369,6 +370,57 @@ def test_binutils_pass2_preview_covers_the_reviewed_chapter6_order(pinned_book, 
     assert not list(tmp_path.glob("klinix-build-*.log"))
 
 
+def test_gcc_pass2_plans_a_separate_native_verification(pinned_book, tmp_path, capsys):
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    build = reviewed_build(pinned_book, "chapter06/gcc-pass2", 2)
+    stages = build_order(build)
+    assert [stage.recipe for stage in stages[-2:]] == ["chapter06/binutils-pass2", "chapter06/gcc-pass2"]
+    assert build.inputs == next(stage.inputs for stage in stages if stage.recipe == "chapter05/gcc-pass1")
+    assert main([
+        "--db", str(db), "build-package", build.recipe, "--revision", APPROVED_REVISION, "--dry-run",
+    ]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["mode"] == "dry-run"
+    target_commands = [command for command in preview["commands"] if command["target_root"]]
+    assert any("--disable-libstdcxx-pch" in command["argv"] for command in preview["commands"])
+    assert len(target_commands) == 1
+    assert target_commands[0]["cwd"] == "/tmp"
+    assert "std::thread" in target_commands[0]["argv"][2]
+    assert not list(tmp_path.glob("klinix-build-*.log"))
+
+
+def test_target_verification_exposes_only_the_staged_root(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    (root / "tmp").mkdir(parents=True)
+    (root / "dev").mkdir()
+    sandbox = Bubblewrap.__new__(Bubblewrap)
+    sandbox._executable = "/usr/bin/bwrap"
+    argv = ("/usr/bin/cc", "--version")
+    log = io.BytesIO()
+
+    def capture(args, command, output, *, timeout):
+        i = args.index("--ro-bind")
+        assert args[i:i + 3] == ["--ro-bind", str(root), "/"]
+        assert args.count("--ro-bind") == 1 and "--bind" not in args
+        assert args[args.index("--dev") + 1] == "/dev"
+        assert args[args.index("--tmpfs") + 1] == "/tmp"
+        assert args[args.index("--chdir") + 1] == "/tmp"
+        assert "/usr/bin:/usr/sbin" in args
+        assert "--unshare-all" in args and "--clearenv" in args
+        assert command == argv and output is log and timeout == 10
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(sandbox, "_execute", capture)
+    sandbox.run_in_target(root, argv, log, timeout=10)
+    assert log.getvalue() == b"$ /usr/bin/cc --version\n"
+
+    (root / "tmp").rmdir()
+    (root / "tmp").symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(KlinixError, match="Target verification requires a real directory"):
+        sandbox.run_in_target(root, argv, log, timeout=10)
+
+
 def test_libstdcxx_uses_the_same_verified_gcc_archive(pinned_book, tmp_path, monkeypatch):
     from klinix import builder
 
@@ -533,3 +585,23 @@ def test_real_temporary_tools_through_binutils_pass2(pinned_book, tmp_path, caps
     log = Path(output["log"]).read_text()
     assert json.loads((target / MANIFEST).read_text())["recipe"] == "chapter06/binutils-pass2"
     assert "Advanced Micro Devices X86-64" in log.split("Klinix binutils-pass2-v1", 1)[1]
+
+
+def test_real_native_gcc(pinned_book, tmp_path, capsys):
+    location = os.environ.get("KLINIX_TEST_GCC_PASS2_SOURCES")
+    if not location:
+        pytest.skip("official GCC pass 2 materials and rootless Bubblewrap required")
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    target = tmp_path / "sysroot"
+    assert main([
+        "--db", str(db), "build-package", "chapter06/gcc-pass2", "--revision", APPROVED_REVISION,
+        "--sources", location, "--target", str(target), "--jobs", "2",
+    ]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert (target / "usr/bin/cc").readlink() == Path("gcc")
+    assert (target / "usr/lib/libgcc_s.so.1").is_file()
+    assert not list((target / "tmp").iterdir())
+    assert not list((target / "dev").iterdir())
+    log = Path(output["log"]).read_text()
+    assert {"Klinix native C OK", "Klinix native C++ thread and exception OK"}.issubset(log.splitlines())

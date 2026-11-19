@@ -5,6 +5,7 @@ import os
 import platform
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 from collections.abc import Sequence
@@ -35,12 +36,7 @@ class Bubblewrap:
             raise KlinixError(f"Missing host build tools under /usr/bin: {', '.join(missing)}")
 
     def _args(self, work: Path, cwd: str, inputs: Path | None, *, bootstrap: bool) -> list[str]:
-        args = [
-            self._executable, "--unshare-all", "--unshare-user", "--disable-userns",
-            "--cap-drop", "ALL", "--die-with-parent", "--new-session", "--clearenv",
-            "--setenv", "PATH", TOOL_PATH, "--setenv", "LC_ALL", "C",
-            "--setenv", "HOME", "/work/home", "--setenv", "TMPDIR", "/tmp",
-        ]
+        args = self._isolation_args(path=TOOL_PATH, home="/work/home")
         for name in TOOLCHAIN:
             if Path(name).is_dir():
                 args.extend(("--ro-bind", name, name))
@@ -64,6 +60,14 @@ class Bubblewrap:
             args.extend(("--ro-bind", str(inputs), "/inputs"))
         args.extend(("--remount-ro", "/", "--chdir", cwd, "--"))
         return args
+
+    def _isolation_args(self, *, path: str, home: str) -> list[str]:
+        return [
+            self._executable, "--unshare-all", "--unshare-user", "--disable-userns",
+            "--cap-drop", "ALL", "--die-with-parent", "--new-session", "--clearenv",
+            "--setenv", "PATH", path, "--setenv", "LC_ALL", "C",
+            "--setenv", "HOME", home, "--setenv", "TMPDIR", "/tmp",
+        ]
 
     def probe(self) -> None:
         try:
@@ -89,9 +93,29 @@ class Bubblewrap:
         self, work: Path, cwd: str, inputs: Path, argv: Sequence[str], log: BinaryIO,
         *, timeout: int = 180, bootstrap: bool = False,
     ) -> None:
+        self._run_logged(self._args(work, cwd, inputs, bootstrap=bootstrap), argv, log, timeout=timeout)
+
+    def run_in_target(
+        self, root: Path, argv: Sequence[str], log: BinaryIO, *, timeout: int,
+    ) -> None:
+        """Run a verification command with the staged root mounted at /."""
+        for directory in (root, root / "dev", root / "tmp"):
+            if not stat.S_ISDIR(directory.lstat().st_mode):
+                raise KlinixError(f"Target verification requires a real directory at {directory}")
+        args = self._isolation_args(path="/usr/bin:/usr/sbin", home="/tmp")
+        args.extend((
+            "--ro-bind", str(root), "/",
+            "--dev", "/dev", "--size", "67108864", "--tmpfs", "/tmp",
+            "--chdir", "/tmp", "--",
+        ))
+        self._run_logged(args, argv, log, timeout=timeout)
+
+    def _run_logged(
+        self, args: list[str], argv: Sequence[str], log: BinaryIO, *, timeout: int,
+    ) -> None:
         log.write(f"$ {shlex.join(argv)}\n".encode())
         log.flush()
-        result = self._run(work, cwd, inputs, argv, log, timeout=timeout, bootstrap=bootstrap)
+        result = self._execute(args, argv, log, timeout=timeout)
         if result.returncode != 0:
             raise KlinixError(f"{argv[0]} exited with status {result.returncode}")
 
@@ -99,9 +123,14 @@ class Bubblewrap:
         self, work: Path, cwd: str, inputs: Path | None, argv: Sequence[str],
         output: BinaryIO | int, *, timeout: int, bootstrap: bool = False,
     ) -> subprocess.CompletedProcess:
+        return self._execute(self._args(work, cwd, inputs, bootstrap=bootstrap), argv, output, timeout=timeout)
+
+    def _execute(
+        self, args: list[str], argv: Sequence[str], output: BinaryIO | int, *, timeout: int,
+    ) -> subprocess.CompletedProcess:
         try:
             return subprocess.run(
-                [*self._args(work, cwd, inputs, bootstrap=bootstrap), *argv],
+                [*args, *argv],
                 cwd="/", env={"PATH": TOOL_PATH, "LC_ALL": "C"},
                 stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
                 timeout=timeout, check=False,

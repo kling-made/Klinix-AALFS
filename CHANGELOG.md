@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0
+
+- Added the pinned LFS 13.1 GCC pass 2 build, native `cc`, and the target C and C++ compiler and runtime libraries.
+- Added read-only target-root verification with Bubblewrap. The staged compiler builds, links, and runs C and C++ probes that exercise the target loader, POSIX threads, and C++ exceptions.
+
 ## 0.6.0
 
 - Added reviewed Chapter 6 builds for Coreutils, Diffutils, File, Findutils, Gawk, Grep, Gzip, Make, Patch, Sed, Tar, Xz, and Binutils pass 2.

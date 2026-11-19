@@ -67,6 +67,9 @@ def _run_stage(build: PackageBuild, sandbox: Bubblewrap, work: Path, inputs: Pat
                 (sources / top).rename(source / approved.unpack_as)
     for command in build.commands:
         LOGGER.info("%s", command.label)
+        if command.target_root:
+            sandbox.run_in_target(work / "root", command.argv, log, timeout=command.timeout)
+            continue
         cwd = (Path("/work/source") / build.source_root / command.cwd).as_posix()
         sandbox.run(work, cwd, inputs, command.argv, log, timeout=command.timeout, bootstrap=build.bootstrap)
 

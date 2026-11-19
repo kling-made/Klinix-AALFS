@@ -94,6 +94,13 @@
     "chapter06/binutils-pass2": {
       "adapter": "binutils-pass2-v1",
       "source_sha256": "154ab23b60070e8f27013c22977f1129425d67d1e8acd6e13010e617811e4cff"
+    },
+    "chapter06/gcc-pass2": {
+      "adapter": "gcc-pass2-v1",
+      "source_sha256": "e6738e29597f733270731aa90600f37ffdc045079dfc27ec7e8192cc81085c3e",
+      "gmp_sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
+      "mpfr_sha256": "b67ba0383ef7e8a8563734e2e889ef5ec3c3b898a01d00fa0a6869ad81c6ce01",
+      "mpc_sha256": "91204cd32f164bd3b7c992d4a6a8ce6519511aadab30f78b6982d0bf8d73e931"
     }
   }
 }

@@ -12,3 +12,5 @@ Set `KLINIX_TEST_SYSROOT_SOURCES` to a directory containing all the archives and
 Set `KLINIX_TEST_SHELL_SOURCES` to the complete `chapter06/bash` material set to test the bootstrap through the temporary shell. This also verifies target libstdc++, M4 macro expansion, and the staged Ncurses programs.
 
 Set `KLINIX_TEST_CHAPTER6_SOURCES` to the complete `chapter06/binutils-pass2` material set to test the bootstrap through the target-native assembler and linker. Package probes run against the staged libraries. The test checks File's magic database, the Coreutils directory layout, and the final ELF produced by Binutils.
+
+Set `KLINIX_TEST_GCC_PASS2_SOURCES` to the complete `chapter06/gcc-pass2` material set to run both compiler passes and verify the native C and C++ compilers in the staged root. The test uses unprivileged Bubblewrap namespaces and checks that the target verification leaves the published mount points empty.

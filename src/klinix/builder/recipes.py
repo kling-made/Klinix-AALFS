@@ -38,6 +38,7 @@ class Command:
     argv: tuple[str, ...]
     cwd: str = "."
     timeout: int = 180
+    target_root: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ def reviewed_build(book: Book, recipe_id: str, jobs: int) -> PackageBuild:
         "bzip2-v1": _bzip2,
         "binutils-pass1-v1": _binutils,
         "gcc-pass1-v1": _gcc,
+        "gcc-pass2-v1": _gcc_pass2,
         "linux-headers-v1": _linux_headers,
         "glibc-cross-v1": _glibc,
         "libstdcxx-pass1-v1": _libstdcxx,
@@ -173,15 +175,7 @@ def _binutils(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageB
                         source_root, commands, expected, bootstrap=True, root_directories=("tools",))
 
 
-def _gcc(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
-    package = recipe.package
-    if package is None or package.name != "gcc-pass1":
-        raise KlinixError("Pinned catalog lacks the reviewed GCC pass 1 package metadata")
-    libc = next((item.package for item in book.recipes if item.id == "chapter05/glibc"), None)
-    if libc is None or libc.name != "glibc" or not VERSION.fullmatch(libc.version):
-        raise KlinixError("Pinned catalog lacks the target Glibc version for GCC pass 1")
-
-    source_root = f"gcc-{package.version}"
+def _gcc_archives(book: Book, recipe: Recipe, approval: dict, source_root: str) -> tuple[ApprovedInput, ...]:
     archives = [_select_input(book, recipe, source_root + ".tar.xz", "source", approval["source_sha256"])]
     for name in ("mpfr", "gmp", "mpc"):
         candidates = [
@@ -192,7 +186,19 @@ def _gcc(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
         if len(candidates) != 1:
             raise KlinixError(f"Pinned GCC recipe requires exactly one source archive for {name}")
         archives.append(ApprovedInput(candidates[0], approval[f"{name}_sha256"], name))
+    return tuple(archives)
 
+
+def _gcc(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
+    package = recipe.package
+    if package is None or package.name != "gcc-pass1":
+        raise KlinixError("Pinned catalog lacks the reviewed GCC pass 1 package metadata")
+    libc = next((item.package for item in book.recipes if item.id == "chapter05/glibc"), None)
+    if libc is None or libc.name != "glibc" or not VERSION.fullmatch(libc.version):
+        raise KlinixError("Pinned catalog lacks the target Glibc version for GCC pass 1")
+
+    source_root = f"gcc-{package.version}"
+    archives = _gcc_archives(book, recipe, approval, source_root)
     target_bin = f"{TOOLS}/bin/{TARGET_TRIPLET}"
     commands = (
         Command("Use lib for 64-bit target libraries", (
@@ -234,8 +240,97 @@ def _gcc(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
         f"tools/lib/gcc/{TARGET_TRIPLET}/{package.version}/include/limits.h",
     )
     binutils = reviewed_build(book, "chapter05/binutils-pass1", jobs)
-    return PackageBuild(book.pin, recipe.id, package, approval["adapter"], tuple(archives),
+    return PackageBuild(book.pin, recipe.id, package, approval["adapter"], archives,
                         source_root, commands, expected, bootstrap=True, prerequisites=(binutils,), root_directories=("tools",))
+
+
+NATIVE_GCC_CHECK = r"""
+test "$(/usr/bin/cc -dumpmachine)" = "$1"
+case "$(/usr/bin/cc -print-sysroot)" in
+    ""|/) ;;
+    *) exit 1 ;;
+esac
+test ! -e /work
+test ! -e /mnt/lfs
+for name in as ld; do
+    tool=$(/usr/bin/cc -print-prog-name="$name")
+    case "$tool" in */*) ;; *) tool=$(command -v "$tool");; esac
+    case "$(readlink -e "$tool")" in /usr/*) ;; *) exit 1;; esac
+done
+cat > probe.c <<'EOF'
+#include <stdio.h>
+int main(void) { return puts("Klinix native C OK") < 0; }
+EOF
+cat > probe.cc <<'EOF'
+#include <iostream>
+#include <stdexcept>
+#include <thread>
+int main() {
+    int value = 0;
+    std::thread worker([&] { value = 42; });
+    worker.join();
+    if (value != 42) return 1;
+    try { throw std::runtime_error("Klinix native C++ thread and exception OK"); }
+    catch (const std::runtime_error& error) { std::cout << error.what() << '\n'; }
+}
+EOF
+/usr/bin/cc probe.c -o native-c
+/usr/bin/g++ -pthread probe.cc -o native-cxx
+/usr/bin/readelf -lW native-c > interpreter
+grep -F "Requesting program interpreter: $2]" interpreter
+./native-c > c.out
+grep -Fx "Klinix native C OK" c.out
+./native-cxx > cxx.out
+grep -Fx "Klinix native C++ thread and exception OK" cxx.out
+""".strip()
+
+
+def _gcc_pass2(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
+    package = recipe.package
+    if package is None or package.name != "gcc-pass2":
+        raise KlinixError("Pinned catalog lacks the reviewed GCC pass 2 package metadata")
+    source_root = f"gcc-{package.version}"
+    inputs = _gcc_archives(book, recipe, approval, source_root)
+    commands = (
+        Command("Use lib for 64-bit target libraries", (
+            "/usr/bin/sed", "-i", "/m64=/s/lib64/lib/", "gcc/config/i386/t-linux64",
+        )),
+        Command("Create the out-of-tree GCC pass 2 build directory", ("/usr/bin/mkdir", "build")),
+        Command("Configure GCC to run natively in the target", (
+            "/usr/bin/bash", "-ec",
+            'triplet=$1; shift; exec ../configure --build="$(../config.guess)" '
+            '"--host=$triplet" "--target=$triplet" "LDFLAGS_FOR_TARGET=-L$PWD/$triplet/libgcc" "$@"',
+            "klinix", TARGET_TRIPLET, "--prefix=/usr", f"--with-build-sysroot={SYSROOT}",
+            "--enable-default-pie", "--enable-default-ssp", "--disable-fixincludes", "--disable-nls",
+            "--disable-multilib", "--disable-libatomic", "--disable-libgomp", "--disable-libquadmath",
+            "--disable-libsanitizer", "--disable-libssp", "--disable-libvtv", "--disable-libstdcxx-pch",
+            "--enable-languages=c,c++",
+            f"CXX_FOR_TARGET={TARGET_COMPILER} -nostdinc++", "target_configargs=gcc_cv_target_thread_file=posix",
+            "CFLAGS=-O2", "CXXFLAGS=-O2", "CFLAGS_FOR_TARGET=-O2", "CXXFLAGS_FOR_TARGET=-O2",
+        ), cwd="build", timeout=600),
+        Command("Cross-compile the native C and C++ toolchain", (
+            "/usr/bin/make", f"-j{jobs}",
+        ), cwd="build", timeout=5400),
+        Command("Install the native GCC toolchain", (
+            "/usr/bin/make", f"DESTDIR={SYSROOT}", "install",
+        ), cwd="build", timeout=900),
+        Command("Provide the target cc link", ("/usr/bin/ln", "-s", "gcc", f"{SYSROOT}/usr/bin/cc")),
+        Command("Prepare the target verification mount points", (
+            "/usr/bin/mkdir", "-p", f"{SYSROOT}/dev", f"{SYSROOT}/tmp",
+        )),
+        Command(
+            "Compile, link, and run native C and C++ inside the target",
+            ("/usr/bin/bash", "-ec", NATIVE_GCC_CHECK, "klinix", TARGET_TRIPLET, TARGET_LOADER),
+            cwd="/tmp", target_root=True,
+        ),
+    )
+    expected = (
+        "usr/bin/cc", "usr/bin/gcc", "usr/bin/g++", "usr/lib/libgcc_s.so.1", "usr/lib/libstdc++.so.6",
+    )
+    binutils = reviewed_build(book, "chapter06/binutils-pass2", jobs)
+    return PackageBuild(book.pin, recipe.id, package, approval["adapter"], inputs, source_root,
+                        commands, expected, bootstrap=True, prerequisites=(binutils,),
+                        root_directories=("usr", "dev", "tmp"))
 
 
 def _linux_headers(book: Book, recipe: Recipe, approval: dict, jobs: int) -> PackageBuild:
