@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- Added reviewed Chapter 6 builds for Coreutils, Diffutils, File, Findutils, Gawk, Grep, Gzip, Make, Patch, Sed, Tar, Xz, and Binutils pass 2.
+- Generate File's magic database with a native helper, stage Coreutils' `chroot` under `/usr/sbin`, and verify the target-native assembler and linker with a small ELF.
+- Exercise each temporary program with the staged loader before publishing the sysroot.
+
 ## 0.5.0
 
 - Added pinned builds for target libstdc++, GNU M4, Ncurses, and Bash, including the target `/bin/sh` link.

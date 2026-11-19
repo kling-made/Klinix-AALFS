@@ -339,6 +339,36 @@ def test_shell_preview_includes_lfs_temporary_tools_in_order(pinned_book, tmp_pa
     assert not list(tmp_path.glob("klinix-build-*.log"))
 
 
+def test_binutils_pass2_preview_covers_the_reviewed_chapter6_order(pinned_book, tmp_path, capsys):
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    build = reviewed_build(pinned_book, "chapter06/binutils-pass2", 2)
+    stages = build_order(build)
+    tools = [stage.package.name for stage in stages if stage.recipe.startswith("chapter06/")]
+    assert tools == [
+        "m4", "ncurses", "bash", "coreutils", "diffutils", "file", "findutils", "gawk",
+        "grep", "gzip", "make", "patch", "sed", "tar", "xz", "binutils-pass2",
+    ]
+    file = next(stage for stage in stages if stage.recipe == "chapter06/file")
+    assert any(
+        command.cwd == "build-host" and command.argv[0] == "../configure"
+        for command in file.commands
+    )
+    assert any(
+        f"FILE_COMPILE=/work/source/{file.source_root}/build-host/src/file" in command.argv
+        for command in file.commands
+    )
+    assert main([
+        "--db", str(db), "build-package", build.recipe, "--revision", APPROVED_REVISION, "--dry-run",
+    ]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["mode"] == "dry-run"
+    assert preview["prerequisites"][0]["recipe"] == "chapter06/xz"
+    first_pass = next(stage for stage in stages if stage.recipe == "chapter05/binutils-pass1")
+    assert first_pass.inputs[0] == build.inputs[0]
+    assert not list(tmp_path.glob("klinix-build-*.log"))
+
+
 def test_libstdcxx_uses_the_same_verified_gcc_archive(pinned_book, tmp_path, monkeypatch):
     from klinix import builder
 
@@ -480,3 +510,26 @@ def test_real_temporary_shell(pinned_book, tmp_path, capsys):
     log = Path(output["log"]).read_text()
     assert "libstdc++.so.6 => /mnt/lfs/usr/lib/libstdc++.so.6" in log
     assert {"Klinix C++ runtime OK", "Klinix M4 OK", "Klinix target shell OK"}.issubset(log.splitlines())
+
+
+def test_real_temporary_tools_through_binutils_pass2(pinned_book, tmp_path, capsys):
+    location = os.environ.get("KLINIX_TEST_CHAPTER6_SOURCES")
+    if not location:
+        pytest.skip("official Chapter 6 materials and rootless Bubblewrap required")
+    db = tmp_path / "catalog.sqlite3"
+    Catalog(db).add(pinned_book)
+    target = tmp_path / "sysroot"
+    assert main([
+        "--db", str(db), "build-package", "chapter06/binutils-pass2", "--revision", APPROVED_REVISION,
+        "--sources", location, "--target", str(target), "--jobs", "2",
+    ]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert (target / "sbin/chroot").resolve() == (target / "usr/sbin/chroot").resolve()
+    assert (target / "usr/share/misc/magic.mgc").is_file()
+    assert (target / "usr/bin/ld").is_file()
+    assert (target / "tools/bin/x86_64-lfs-linux-gnu-ld").is_file()
+    assert not (target / "usr/lib/libmagic.la").exists()
+    assert not (target / "usr/lib/liblzma.la").exists()
+    log = Path(output["log"]).read_text()
+    assert json.loads((target / MANIFEST).read_text())["recipe"] == "chapter06/binutils-pass2"
+    assert "Advanced Micro Devices X86-64" in log.split("Klinix binutils-pass2-v1", 1)[1]

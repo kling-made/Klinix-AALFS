@@ -42,6 +42,58 @@
     "chapter06/bash": {
       "adapter": "bash-cross-v1",
       "source_sha256": "0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba"
+    },
+    "chapter06/coreutils": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "394024eda0a5955217ceda9cd1201e65dc8fa3aa29c2951135a49521d57c3cc3"
+    },
+    "chapter06/diffutils": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "7c8b7f9fc8609141fdea9cece85249d308624391ff61dedaf528fcb337727dfd"
+    },
+    "chapter06/file": {
+      "adapter": "file-cross-v1",
+      "source_sha256": "ed14656883b23a364b4057c05595d93252da9bc473d30106519519d0da141283"
+    },
+    "chapter06/findutils": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "bfd19cb06cc71f3352d567e90284d8cdac02ac89774bbeadf0b533b0c11432fd"
+    },
+    "chapter06/gawk": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "07f6f7342b7febe4313fc2c2542ad93d64fe20ad8717200109f105a826f5fd37"
+    },
+    "chapter06/grep": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9"
+    },
+    "chapter06/gzip": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "01a7b881bd220bfdf615f97b8718f80bdfd3f6add385b993dcf6efd14e8c0ac6"
+    },
+    "chapter06/make": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3"
+    },
+    "chapter06/patch": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "f87cee69eec2b4fcbf60a396b030ad6aa3415f192aa5f7ee84cad5e11f7f5ae3"
+    },
+    "chapter06/sed": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "b8e72182b2ec96a3574e2998c47b7aaa64cc20ce000d8e9ac313cc07cecf28c7"
+    },
+    "chapter06/tar": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16"
+    },
+    "chapter06/xz": {
+      "adapter": "temporary-tool-v1",
+      "source_sha256": "fff1ffcf2b0da84d308a14de513a1aa23d4e9aa3464d17e64b9714bfdd0bbfb6"
+    },
+    "chapter06/binutils-pass2": {
+      "adapter": "binutils-pass2-v1",
+      "source_sha256": "154ab23b60070e8f27013c22977f1129425d67d1e8acd6e13010e617811e4cff"
     }
   }
 }

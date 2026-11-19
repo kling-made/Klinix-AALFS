@@ -10,3 +10,5 @@ Set `KLINIX_TEST_BOOTSTRAP_SOURCES` to the directory of pinned cross-toolchain a
 Set `KLINIX_TEST_SYSROOT_SOURCES` to a directory containing all the archives and patches from the `chapter05/glibc` build preview to run the four-stage Glibc integration test. The test verifies the staged Linux headers, ELF interpreter, and actual libc used at runtime.
 
 Set `KLINIX_TEST_SHELL_SOURCES` to the complete `chapter06/bash` material set to test the bootstrap through the temporary shell. This also verifies target libstdc++, M4 macro expansion, and the staged Ncurses programs.
+
+Set `KLINIX_TEST_CHAPTER6_SOURCES` to the complete `chapter06/binutils-pass2` material set to test the bootstrap through the target-native assembler and linker. Package probes run against the staged libraries. The test checks File's magic database, the Coreutils directory layout, and the final ELF produced by Binutils.

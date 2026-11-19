@@ -1,6 +1,6 @@
 # Reviewed directory build
 
-The Bzip2, Binutils pass 1, GCC pass 1, Linux API headers, Glibc, target libstdc++, M4, Ncurses, and Bash adapters implement reviewed sections of LFS 13.1 systemd. The exact book revision and reviewed SHA-256 digests are in `src/klinix/builder/approvals.json`. The catalog identifies the required packages and materials. The adapters supply the actual commands and never interpret imported command text.
+The reviewed LFS 13.1 systemd build covers the cross-toolchain, Linux API headers, Glibc, target libstdc++, and the temporary tools through Binutils pass 2. Bzip2 has its own staging adapter. The exact book revision and reviewed SHA-256 digests are in `src/klinix/builder/approvals.json`. The catalog identifies the required packages and materials. The adapters supply the actual commands and never interpret imported command text.
 
 `klinix build-check` compiles and runs a small C program inside Bubblewrap. With `--bootstrap`, it checks the additional host programs and compiles and runs a small C++ program with the bootstrap mount layout. Package execution uses the same namespace and mount configuration with the verified inputs mounted read-only. A synthetic root exposes selected host toolchain paths, a minimal device tree, and a temporary filesystem. The build runs offline with a fixed environment, without access to the final target.
 
@@ -16,4 +16,6 @@ The standalone headers stage sanitizes the kernel's x86 user-space API headers a
 
 The libstdc++ stage builds against the staged Glibc and installs C++ headers where the cross-compiler searches. A C++ program checks the headers and loads the staged library at runtime. M4 records the staged Glibc's POSIX spawn support for later configure scripts. Ncurses builds a native `tic` to generate the database during cross-install, then checks the database with the target `infocmp`. Bash installs the relative `/bin/sh` link and verifies POSIX mode with the staged loader.
 
-Published targets contain a manifest at `var/lib/klinix/build-manifest.json`. The next stage is Coreutils, followed by the remaining Chapter 6 temporary tools and the target chroot.
+The build continues through Coreutils, Diffutils, File, Findutils, Gawk, Grep, Gzip, Make, Patch, Sed, Tar, and Xz. Coreutils installs `chroot` under `/usr/sbin` and adds the merged `/sbin` link. File uses a matching build-host binary to generate the target magic database. Each tool runs a probe with the staged loader. The second Binutils pass installs the target-native assembler and linker under `usr/` and verifies them by assembling and linking a small x86-64 ELF.
+
+Published targets contain a manifest at `var/lib/klinix/build-manifest.json`. GCC pass 2 and the target chroot are pending.

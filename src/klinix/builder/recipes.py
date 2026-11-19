@@ -73,6 +73,10 @@ def reviewed_build(book: Book, recipe_id: str, jobs: int) -> PackageBuild:
         "ncurses-cross-v1": _ncurses,
         "bash-cross-v1": _bash,
     }.get(adapter)
+    if adapter in {"temporary-tool-v1", "file-cross-v1", "binutils-pass2-v1"}:
+        from klinix.builder.temporary import reviewed_temporary
+
+        factory = reviewed_temporary
     if (book.pin.family, book.pin.edition) != ("lfs", "systemd") or factory is None:
         raise KlinixError(f"No reviewed build adapter for {recipe_id!r} at {book.pin.revision}")
     recipe = next((entry for entry in book.recipes if entry.id == recipe_id), None)
